@@ -51,26 +51,26 @@ Advanced Network Traffic Analyzer with CLI and web dashboard interface.
 
 ### Command Line Interface
     
-    List available interfaces:
+List available interfaces:
 
-        python packet_analyzer.py --list_interfaces
+    python packet_analyzer.py --list_interfaces
     
-    Capture packets:
+Capture packets:
 
-        # Basic capture
-        python packet_analyzer.py -i eth0 -c 100
-        # Capture with protocol filter
-        python packet_analyzer.py -i eth0 -c 50 -p TCP
-        # Custom output file
-        python packet_analyzer.py -i eth0 -c 200 -o my_capture.pcap
+    # Basic capture
+    python packet_analyzer.py -i eth0 -c 100
+    # Capture with protocol filter
+    python packet_analyzer.py -i eth0 -c 50 -p TCP
+    # Custom output file
+    python packet_analyzer.py -i eth0 -c 200 -o my_capture.pcap
 
-    Web Dashboard
+Web Dashboard
         
-        Start the dashboard:
+Start the dashboard:
 
-            streamlit run dashboard.py
+    streamlit run dashboard.py
 
-        * Then open http://localhost:8501 in your browser.
+* Then open http://localhost:8501 in your browser.
     
 ### Dashboard Features:
 
@@ -82,33 +82,33 @@ Advanced Network Traffic Analyzer with CLI and web dashboard interface.
 
 ## 📦 Dependencies
 
-    * pyshark: Packet analysis
-    * scapy: Packet capture
-    * streamlit: Web dashboard
-    * plotly: Visualizations
-    * pandas: Data handling
-    * psutil: System utilities
-    * All dependencies are listed in requirements.txt
+* pyshark: Packet analysis
+* scapy: Packet capture
+* streamlit: Web dashboard
+* plotly: Visualizations
+* pandas: Data handling
+* psutil: System utilities
+* All dependencies are listed in requirements.txt
 
 ## 🔧 Troubleshooting
 
-    Common Issues
-        "Permission denied" on capture:
+Common Issues
+    "Permission denied" on capture:
 
-            # Run with admin privileges
-            sudo python packet_analyzer.py -i eth0 -c 100
+        # Run with admin privileges
+        sudo python packet_analyzer.py -i eth0 -c 100
 
-        "No interface found":
+    "No interface found":
 
-            # List available interfaces
-            python packet_analyzer.py --list_interfaces
-        
-        Dashboard won't start:
+        # List available interfaces
+        python packet_analyzer.py --list_interfaces
+    
+    Dashboard won't start:
 
-            # Check if Streamlit is installed
-            pip install streamlit
-            # Try different port
-            streamlit run dashboard.py --server.port 8502
+        # Check if Streamlit is installed
+        pip install streamlit
+        # Try different port
+        streamlit run dashboard.py --server.port 8502
 
 ## 🤝 Contributing
 Contributions are welcome! Please see CONTRIBUTING.md for guidelines.
