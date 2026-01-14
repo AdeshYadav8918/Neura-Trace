@@ -93,6 +93,7 @@ Start the dashboard:
 ## 🔧 Troubleshooting
 
 Common Issues
+
     "Permission denied" on capture:
 
         # Run with admin privileges
