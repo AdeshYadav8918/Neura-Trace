@@ -1,7 +1,7 @@
-streamlit>=1.28.0
-pyshark>=0.6
-scapy>=2.5.0
-psutil>=5.9.5
-pandas>=2.1.0
-plotly>=5.17.0
-argparse>=1.4.0
+streamlit
+pyshark
+scapy
+psutil
+pandas
+plotly
+argparse
