@@ -7,7 +7,9 @@ scapy==2.5.0
 Pillow==10.0.0
 ipaddress==1.0.23
 cryptography==41.0.4
+google-generativeai==0.3.2
 streamlit-float==0.3.0
 streamlit-option-menu==0.3.12
 streamlit-extras==0.3.0
 streamlit-lottie==0.2.3
+requests==2.31.0

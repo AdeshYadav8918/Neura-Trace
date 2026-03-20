@@ -1,71 +1,81 @@
+"""
+Crypto Vault - AES-256-GCM encryption for sensitive data at rest.
+Key is derived from VAULT_MASTER_KEY_B64 env variable if set,
+otherwise falls back to plaintext mode so existing files are never corrupted.
+"""
+
 import os
 import base64
+import logging
 from typing import Optional
 
-# Ensure cryptography is available instead of failing outright.
+logger = logging.getLogger(__name__)
+
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     CRYPTO_AVAILABLE = True
 except ImportError:
     CRYPTO_AVAILABLE = False
-    
+
+
 class SecureVault:
-    """Military-grade AES-256-GCM Encryption for Data at Rest"""
-    
+    """AES-256-GCM encryption vault. Gracefully degrades to plaintext if key not set."""
+
     def __init__(self):
-        # Master key should reside outside the codebase. Auto-generating for local strict resilience if missing.
+        self.aesgcm = None
         key_b64 = os.environ.get("VAULT_MASTER_KEY_B64")
-        if not key_b64:
-            if CRYPTO_AVAILABLE:
-                self.key = AESGCM.generate_key(bit_length=256)
-                # Store it in memory for the session
-                os.environ["VAULT_MASTER_KEY_B64"] = base64.b64encode(self.key).decode('utf-8')
-            else:
-                self.key = None
+
+        if CRYPTO_AVAILABLE and key_b64:
+            try:
+                key = base64.b64decode(key_b64)
+                self.aesgcm = AESGCM(key)
+                logger.info("SecureVault: AES-256-GCM encryption active.")
+            except Exception as e:
+                logger.warning(f"SecureVault: invalid key, falling back to plaintext. {e}")
         else:
-            self.key = base64.b64decode(key_b64)
-            
-        if CRYPTO_AVAILABLE and self.key:
-            self.aesgcm = AESGCM(self.key)
-        else:
-            self.aesgcm = None
+            logger.info("SecureVault: VAULT_MASTER_KEY_B64 not set — running in plaintext mode.")
+
+    @property
+    def encryption_enabled(self) -> bool:
+        return self.aesgcm is not None
 
     def encrypt_and_save(self, data: bytes, filepath: str) -> bool:
-        """Encrypts data with AES-256-GCM and writes to filepath"""
-        if not self.aesgcm:
-            # Fallback if crypto not installed, though military grade mandates it.
+        """Save data. Encrypts if key is configured, otherwise saves plaintext."""
+        if self.aesgcm:
+            nonce = os.urandom(12)
+            ciphertext = self.aesgcm.encrypt(nonce, data, associated_data=b"neuratrace_vault")
+            with open(filepath, 'wb') as f:
+                f.write(b"ENC:" + nonce + ciphertext)
+        else:
+            # Plaintext fallback — preserves full functionality without a key
             with open(filepath, 'wb') as f:
                 f.write(data)
-            return False
-            
-        nonce = os.urandom(12) 
-        ciphertext = self.aesgcm.encrypt(nonce, data, associated_data=b"neuratrace_vault")
-        
-        with open(filepath, 'wb') as f:
-            f.write(nonce + ciphertext)
         return True
-            
+
     def read_and_decrypt(self, filepath: str) -> Optional[bytes]:
-        """Reads and decrypts data from filepath"""
+        """Read file. Decrypts if encrypted header is found, else returns raw bytes."""
         if not os.path.exists(filepath):
             return None
-            
+
         with open(filepath, 'rb') as f:
             content = f.read()
-            
-        if not self.aesgcm or len(content) < 12:
-            return content
-            
-        nonce = content[:12]
-        ciphertext = content[12:]
-        try:
-            return self.aesgcm.decrypt(nonce, ciphertext, associated_data=b"neuratrace_vault")
-        except Exception:
-            # Integrity check failed or unencrypted
-            return content
+
+        # Check for encryption marker
+        if content.startswith(b"ENC:") and self.aesgcm:
+            try:
+                payload = content[4:]
+                nonce = payload[:12]
+                ciphertext = payload[12:]
+                return self.aesgcm.decrypt(nonce, ciphertext, associated_data=b"neuratrace_vault")
+            except Exception as e:
+                logger.error(f"Decryption failed for {filepath}: {e}")
+                return None
+
+        # Return as-is (plaintext JSON or unencrypted file)
+        return content
 
     def secure_delete(self, filepath: str):
-        """DoD 5220.22-M simplified 3-pass file wipe"""
+        """Overwrite file before deletion (basic secure erase)."""
         if os.path.exists(filepath):
             try:
                 length = os.path.getsize(filepath)
@@ -74,8 +84,9 @@ class SecureVault:
                         f.seek(0)
                         f.write(os.urandom(length))
             except Exception:
-                pass # Depending on OS file locks
+                pass
             os.remove(filepath)
 
-# Singleton instance for the application
+
+# Singleton
 vault = SecureVault()
