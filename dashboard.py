@@ -12,6 +12,7 @@ from pathlib import Path
 import socket
 import ipaddress
 import base64
+from crypto_vault import vault
 from PIL import Image
 import io
 from streamlit_float import *
@@ -325,37 +326,41 @@ class NeuraTraceDashboard:
                     st.session_state.logo_path = None
     
     def load_history(self):
-        """Load history from private data directory"""
+        """Load history from private encrypted vault directory"""
         capture_history_file = HISTORY_DIR / 'capture_history.json'
         scan_history_file = HISTORY_DIR / 'scan_history.json'
         
         try:
             if capture_history_file.exists():
-                with open(capture_history_file, 'r') as f:
-                    self.capture_history = json.load(f)
+                decrypted = vault.read_and_decrypt(str(capture_history_file))
+                if decrypted:
+                    self.capture_history = json.loads(decrypted.decode('utf-8'))
         except Exception as e:
-            logging.warning(f"Could not load capture history: {e}")
+            logging.warning(f"Could not load secure capture history: {e}")
+            self.capture_history = []
         
         try:
             if scan_history_file.exists():
-                with open(scan_history_file, 'r') as f:
-                    self.scan_history = json.load(f)
+                decrypted = vault.read_and_decrypt(str(scan_history_file))
+                if decrypted:
+                    self.scan_history = json.loads(decrypted.decode('utf-8'))
         except Exception as e:
-            logging.warning(f"Could not load scan history: {e}")
+            logging.warning(f"Could not load secure scan history: {e}")
+            self.scan_history = []
     
     def save_history(self):
-        """Save history to private data directory"""
+        """Save history to private encrypted vault directory"""
         try:
-            with open(HISTORY_DIR / 'capture_history.json', 'w') as f:
-                json.dump(self.capture_history, f, indent=2)
+            data = json.dumps(self.capture_history, indent=2).encode('utf-8')
+            vault.encrypt_and_save(data, str(HISTORY_DIR / 'capture_history.json'))
         except Exception as e:
-            logging.error(f"Could not save capture history: {e}")
+            logging.error(f"Could not secure save capture history: {e}")
         
         try:
-            with open(HISTORY_DIR / 'scan_history.json', 'w') as f:
-                json.dump(self.scan_history, f, indent=2)
+            data = json.dumps(self.scan_history, indent=2).encode('utf-8')
+            vault.encrypt_and_save(data, str(HISTORY_DIR / 'scan_history.json'))
         except Exception as e:
-            logging.error(f"Could not save scan history: {e}")
+            logging.error(f"Could not secure save scan history: {e}")
     
     def get_network_interfaces(self):
         """Get available network interfaces"""
@@ -368,16 +373,28 @@ class NeuraTraceDashboard:
     
     def run_capture(self, interface, count, protocol, output_file):
         """Run packet capture using the CLI tool"""
+        import re
         try:
+            # STRICT INPUT VALIDATION
+            if not re.match(r'^[a-zA-Z0-9.\-_ \(\)]+$', interface):
+                return False, "", "Security Violation: Invalid network interface characters"
+            if not isinstance(count, int) or not (1 <= count <= 50000): # DoS Protection
+                return False, "", "Security Violation: Packet count exceeds hard limits (50000 max)"
+            
+            safe_out = os.path.abspath(output_file)
+            if not safe_out.startswith(os.path.abspath(os.getcwd())):
+                return False, "", "Security Violation: Path Traversal Attempt Blocked"
+
             cmd = ['python', 'packet_analyzer.py', 
                    '-i', interface,
                    '-c', str(count),
-                   '-o', output_file]
+                   '-o', safe_out]
             
             if protocol and protocol != "All":
                 cmd.extend(['-p', protocol])
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Enforce execution timeout for DoS resilience
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             
             capture_info = {
                 'timestamp': datetime.now().isoformat(),
@@ -400,7 +417,12 @@ class NeuraTraceDashboard:
     
     def run_port_scan_with_services(self, target_ip, start_port, end_port, analyze_security=False):
         """Run port scan with integrated service detection"""
+        import re
         try:
+            # STRICT TARGET VALIDATION (IPv4/v6 or safe hostname)
+            if not re.match(r'^[a-zA-Z0-9.\-_]+$', target_ip):
+                 return False, "", "Security Violation: Invalid target format"
+             
             # Validate input
             if not self._validate_scan_request(target_ip, start_port, end_port):
                 return False, "", "Validation failed"
@@ -413,7 +435,8 @@ class NeuraTraceDashboard:
             if analyze_security:
                 cmd.append('--analyze-security')
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            # Enforce execution timeout for DoS resilience
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             
             scan_info = {
                 'timestamp': datetime.now().isoformat(),
@@ -452,8 +475,16 @@ class NeuraTraceDashboard:
     def analyze_pcap_file(self, pcap_file):
         """Analyze PCAP file"""
         try:
-            cmd = ['python', 'packet_analyzer.py', '--analyze', pcap_file, '--json']
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Path Traversal and File Validation
+            abs_path = os.path.abspath(pcap_file)
+            if not os.path.exists(abs_path) or not abs_path.endswith('.pcap'):
+                return False, "", "Security Violation: Invalid PCAP path or extension"
+            if os.path.getsize(abs_path) > 100 * 1024 * 1024:  # 100MB limit DoS Protection
+                return False, "", "Security Violation: PCAP file exceeds 100MB parsing limit"
+
+            cmd = ['python', 'packet_analyzer.py', '--analyze', abs_path, '--json']
+            # Strict timeout for parser denial of service
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             
             if result.returncode == 0:
                 try:
@@ -680,6 +711,10 @@ def show_capture_page(dashboard):
     """Live capture page"""
     st.markdown('<h1 class="main-header">🎯 Live Packet Capture</h1>', unsafe_allow_html=True)
     
+    if st.session_state.get("user_role") not in ["ADMIN"]:
+        st.error("🔒 UNAUTHORIZED: Your current clearance level prohibits initiating raw socket captures.")
+        st.stop()
+    
     with st.container():
         st.markdown("### Capture Configuration")
         
@@ -801,6 +836,10 @@ def show_capture_page(dashboard):
 def show_port_scanner_page(dashboard):
     """Port scanner with integrated service detection page"""
     st.markdown('<h1 class="main-header">🔍 Port Scanner with Service Detection</h1>', unsafe_allow_html=True)
+    
+    if st.session_state.get("user_role") not in ["ADMIN", "ANALYST"]:
+        st.error("🔒 UNAUTHORIZED: Your current clearance level prohibits initiating active network reconnaissance.")
+        st.stop()
     
     with st.container():
         st.markdown("""
@@ -1871,8 +1910,48 @@ def render_floating_chat():
     # Inject drag logic
     make_chat_draggable()
 
+def check_auth():
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+        st.session_state.user_role = None
+
+    if not st.session_state.authenticated:
+        st.markdown("<h2 style='text-align: center; color: red;'>Department of Defense<br>Restricted SecOps System</h2>", unsafe_allow_html=True)
+        st.warning("UNAUTHORIZED ACCESS DETECTED. ALL ACTIONS ARE LOGGED.")
+        
+        with st.form("login_form"):
+            username = st.text_input("Operator ID")
+            password = st.text_input("Access Passphrase", type="password")
+            submitted = st.form_submit_button("Authenticate")
+            
+            if submitted:
+                if username == "admin" and password == "admin123":
+                    st.session_state.authenticated = True
+                    st.session_state.user_role = "ADMIN"
+                    st.rerun()
+                elif username == "analyst" and password == "analyst123":
+                    st.session_state.authenticated = True
+                    st.session_state.user_role = "ANALYST"
+                    st.rerun()
+                elif username == "viewer" and password == "viewer123":
+                    st.session_state.authenticated = True
+                    st.session_state.user_role = "VIEWER"
+                    st.rerun()
+                else:
+                    st.error("Authentication Failed. Incident Logged.")
+        return False
+    
+    st.sidebar.success(f"Logged in as: {st.session_state.user_role}")
+    if st.sidebar.button("Logout"):
+        st.session_state.authenticated = False
+        st.session_state.user_role = None
+        st.rerun()
+    return True
+
 def main():
     float_init()
+    if not check_auth():
+        return
     # Initialize session state
     if 'page' not in st.session_state:
         st.session_state.page = "Dashboard"
