@@ -1,123 +1,53 @@
-# 🧠 Neura Trace
+# 🧠 Neura Trace - Network Analysis Tool
 
-Advanced Network Traffic Analyzer with CLI and web dashboard interface.
+![Neura Trace Logo](logo.png)
 
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Streamlit](https://img.shields.io/badge/Dashboard-Streamlit-red)](https://streamlit.io/)
+**Neura Trace** is a comprehensive network analysis tool designed for security professionals, system administrators, and network enthusiasts. It combines port scanning with integrated service detection, packet capture, and security analysis in a single, user-friendly interface.
 
 ## ✨ Features
 
-- **Dual Interface**: Command-line tool AND web dashboard
-- **Real-time Capture**: Live packet capture with protocol filtering
-- **PCAP Analysis**: Load and analyze existing capture files
-- **Visual Dashboard**: Interactive charts and statistics
-- **Multi-protocol**: TCP, UDP, HTTP, DNS, ICMP support
-- **Cross-platform**: Works on Windows, Linux, and macOS
+### 🔍 **Integrated Port & Service Scanner**
+- **Smart Port Scanning**: Scan ranges from 1-65535 with configurable threading
+- **Automatic Service Detection**: Identifies running services on open ports
+- **Banner Grabbing**: Captures service banners for version identification
+- **Process Information**: Shows local process details for services (localhost scans)
+- **Security Analysis**: Flags potentially vulnerable services with recommendations
+
+### 🎯 **Live Packet Capture**
+- **Real-time Monitoring**: Capture network traffic from any interface
+- **Protocol Filtering**: Filter by TCP, UDP, HTTP, DNS, ICMP, ARP
+- **PCAP Export**: Save captures in standard PCAP format
+- **Metadata Logging**: Automatic capture statistics and metadata
+
+### 📊 **PCAP Analysis**
+- **File Upload**: Analyze existing PCAP files
+- **Traffic Summary**: Protocol distribution, source/destination IPs
+- **Visualization**: Interactive charts and graphs
+
+### 🖥️ **Modern Web Dashboard**
+- **Streamlit Interface**: Beautiful, responsive web interface
+- **Custom Logo Support**: Upload your own logo or use default
+- **Dark/Light Theme**: Automatic theme switching
+- **History Tracking**: All scans and captures logged
+- **Export Capabilities**: Download results as CSV/JSON
+
+### 🛡️ **Security Features**
+- **Legal Compliance**: Built-in authorization warnings and logging
+- **Rate Limiting**: Prevents accidental mass scanning
+- **Scope Validation**: Validates target IPs before scanning
+- **Usage Logging**: All activities logged for accountability
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.8 or higher
-- Administrative privileges for packet capture
-- Wireshark/tshark installed
+- Python 3.8+
+- Administrative/root privileges (for packet capture)
 
 ### Installation
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/neura-trace.git
+cd neura-trace
 
-1. **Clone and setup:**
-
-    git clone https://github.com/yourusername/neura-trace.git
-    cd neura-trace
-
-2. **Install Dependencies**
-
-    pip install -r requirements.txt
-
-3. **Install system dependencies**
-
-* Ubuntu/Debian:
-
-    sudo apt-get install tshark
-
-* macOS:
-
-    brew install wireshark
-
-* Windows:
-
-    Install Wireshark
-
-## 📖 Usage
-
-### Command Line Interface
-    
-List available interfaces:
-
-    python packet_analyzer.py --list_interfaces
-    
-Capture packets:
-
-    # Basic capture
-    python packet_analyzer.py -i eth0 -c 100
-    # Capture with protocol filter
-    python packet_analyzer.py -i eth0 -c 50 -p TCP
-    # Custom output file
-    python packet_analyzer.py -i eth0 -c 200 -o my_capture.pcap
-
-Web Dashboard
-        
-Start the dashboard:
-
-    streamlit run dashboard.py
-
-* Then open http://localhost:8501 in your browser.
-    
-### Dashboard Features:
-
-    📊 Overview: Real-time statistics and charts
-    🎯 Live Capture: Interactive capture controls
-    📁 PCAP Analysis: Upload and analyze capture files
-    📜 History: View capture history and export data
-    ⚙️ Settings: Configure preferences and defaults
-
-## 📦 Dependencies
-
-* pyshark: Packet analysis
-* scapy: Packet capture
-* streamlit: Web dashboard
-* plotly: Visualizations
-* pandas: Data handling
-* psutil: System utilities
-* All dependencies are listed in requirements.txt
-
-## 🔧 Troubleshooting
-
-Common Issues
-
-    "Permission denied" on capture:
-
-        # Run with admin privileges
-        sudo python packet_analyzer.py -i eth0 -c 100
-
-    "No interface found":
-
-        # List available interfaces
-        python packet_analyzer.py --list_interfaces
-    
-    Dashboard won't start:
-
-        # Check if Streamlit is installed
-        pip install streamlit
-        # Try different port
-        streamlit run dashboard.py --server.port 8502
-
-## 🤝 Contributing
-Contributions are welcome! Please see CONTRIBUTING.md for guidelines.
-
-## 📄 License
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 📞 Support
-
-* Issues: GitHub Issues
-* Questions: Open a discussion in GitHub
+# Install dependencies
+pip install -r requirements.txt

@@ -26,6 +26,7 @@ env/
 ENV/
 env.bak/
 venv.bak/
+.venv/
 
 # IDE
 .vscode/
@@ -43,12 +44,47 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 
-# Project Specific
+# ============================
+# USER DATA - PRIVATE (DO NOT COMMIT)
+# ============================
+
+# Private data directory (all user uploads/captures stored here)
+data/
+
+# Legacy directories (if any old data exists)
 captures/
 uploads/
+
+# Capture files
 *.pcap
 *.pcapng
+
+# History and cache files (contain user scan data)
 capture_history.json
+scan_history.json
+security_scan_history.json
+capture_metadata.json
+cve_cache.json
+
+# Log files (may contain sensitive info)
 *.log
+neura_trace_usage.log
+
+# Temp files
 temp/
 tmp/
+
+# ============================
+# SENSITIVE CONFIG
+# ============================
+
+# Environment files (API keys)
+.env
+.env.local
+.env.*.local
+*.env
+
+# Config files with secrets
+config.json
+secrets.json
+api_keys.json
