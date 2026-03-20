@@ -1908,48 +1908,8 @@ def render_floating_chat():
     # Inject drag logic
     make_chat_draggable()
 
-def check_auth():
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
-        st.session_state.user_role = None
-
-    if not st.session_state.authenticated:
-        st.markdown("<h2 style='text-align: center; color: red;'>Department of Defense<br>Restricted SecOps System</h2>", unsafe_allow_html=True)
-        st.warning("UNAUTHORIZED ACCESS DETECTED. ALL ACTIONS ARE LOGGED.")
-        
-        with st.form("login_form"):
-            username = st.text_input("Operator ID")
-            password = st.text_input("Access Passphrase", type="password")
-            submitted = st.form_submit_button("Authenticate")
-            
-            if submitted:
-                if username == "admin" and password == "admin123":
-                    st.session_state.authenticated = True
-                    st.session_state.user_role = "ADMIN"
-                    st.rerun()
-                elif username == "analyst" and password == "analyst123":
-                    st.session_state.authenticated = True
-                    st.session_state.user_role = "ANALYST"
-                    st.rerun()
-                elif username == "viewer" and password == "viewer123":
-                    st.session_state.authenticated = True
-                    st.session_state.user_role = "VIEWER"
-                    st.rerun()
-                else:
-                    st.error("Authentication Failed. Incident Logged.")
-        return False
-    
-    st.sidebar.success(f"Logged in as: {st.session_state.user_role}")
-    if st.sidebar.button("Logout"):
-        st.session_state.authenticated = False
-        st.session_state.user_role = None
-        st.rerun()
-    return True
-
 def main():
     float_init()
-    if not check_auth():
-        return
     # Initialize session state
     if 'page' not in st.session_state:
         st.session_state.page = "Dashboard"
