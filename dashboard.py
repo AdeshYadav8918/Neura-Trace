@@ -22,8 +22,13 @@ try:
 except ImportError:
     pass
 
-# API Configuration - Hardcoded for Deployment
-os.environ['GEMINI_API_KEY'] = "AIzaSyB72wDWbpaTTO-iwHOjKCRMXI5_Z5bjLpE"
+# API Configuration - Load from .env instead of hardcoding
+if os.path.exists('.env'):
+    with open('.env') as f:
+        for line in f:
+            if '=' in line and not line.startswith('#'):
+                k, v = line.strip().split('=', 1)
+                os.environ[k.strip()] = v.strip().strip("'\"")
 
 # Import AI modules
 try:
