@@ -1389,46 +1389,22 @@ def show_settings_page():
     """Settings page"""
     st.markdown('<h1 class="main-header">⚙️ Settings</h1>', unsafe_allow_html=True)
     
-    # Create tabs for settings
-    tab1, tab2 = st.tabs(["🖥️ Display", "📁 Storage"])
+    # Only Display settings remain
+    st.subheader("Display Settings")
     
-    with tab1:
-        st.subheader("Display Settings")
+    with st.form("display_settings_form"):
+        col1, col2 = st.columns(2)
         
-        with st.form("display_settings_form"):
-            col1, col2 = st.columns(2)
+        with col1:
+            theme = st.selectbox("Theme", ["Dark", "Light", "Auto"], index=0)
             
-            with col1:
-                theme = st.selectbox("Theme", ["Dark", "Light", "Auto"], index=0)
-                
-            with col2:
-                refresh_interval = st.slider("Dashboard Refresh (seconds)", 5, 60, 30)
-            
-            if st.form_submit_button("💾 Save Display Settings", use_container_width=True):
-                st.session_state.display_theme = theme
-                st.session_state.refresh_interval = refresh_interval
-                st.success("Display settings saved!")
-
-    with tab2:
-        st.subheader("Data Storage Settings")
-        with st.form("storage_settings_form"):
-            current_config = {}
-            if os.path.exists('neura_trace_config.json'):
-                try:
-                    with open('neura_trace_config.json', 'r') as f:
-                        current_config = json.load(f)
-                except:
-                    pass
-            
-            default_path = current_config.get("save_path", r"E:\Backup\Desktop\NT\saved_scans")
-            new_save_path = st.text_input("Custom Save Path", value=default_path)
-            
-            if st.form_submit_button("💾 Save Storage Settings", use_container_width=True):
-                if new_save_path:
-                    current_config['save_path'] = new_save_path
-                    with open('neura_trace_config.json', 'w') as f:
-                        json.dump(current_config, f)
-                    st.success("Storage path saved! Changes apply immediately to new saves.")
+        with col2:
+            refresh_interval = st.slider("Dashboard Refresh (seconds)", 5, 60, 30)
+        
+        if st.form_submit_button("💾 Save Display Settings", use_container_width=True):
+            st.session_state.display_theme = theme
+            st.session_state.refresh_interval = refresh_interval
+            st.success("Display settings saved!")
     
     st.divider()
     
