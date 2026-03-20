@@ -16,8 +16,19 @@ from typing import Dict, List, Optional
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path("saved_scans")
-DATA_DIR.mkdir(exist_ok=True)
+# Route cache to the same custom save directory as the rest of the app
+_DEFAULT_SAVE_PATH = r"E:\Backup\Desktop\NT\saved_scans"
+_CFG = os.path.join(_DEFAULT_SAVE_PATH, 'neura_trace_config.json')
+try:
+    if os.path.exists(_CFG):
+        import json as _j
+        _c = _j.load(open(_CFG))
+        _DEFAULT_SAVE_PATH = _c.get('save_path', _DEFAULT_SAVE_PATH)
+except Exception:
+    pass
+
+DATA_DIR = Path(_DEFAULT_SAVE_PATH)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class CVELookup:

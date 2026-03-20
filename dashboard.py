@@ -79,22 +79,26 @@ def get_logo_base64(image_path=None):
     
     return None
 
+# Config file lives in the custom save directory, not the project folder
+_DEFAULT_SAVE_PATH = r"E:\Backup\Desktop\NT\saved_scans"
+_CONFIG_FILE = os.path.join(_DEFAULT_SAVE_PATH, 'neura_trace_config.json')
+
 def save_logo_path(logo_path):
-    """Save logo path to session state and config file"""
+    """Save logo path to config file inside DATA_DIR"""
     if logo_path and os.path.exists(logo_path):
         st.session_state.logo_path = logo_path
-        
+        os.makedirs(_DEFAULT_SAVE_PATH, exist_ok=True)
         config = {"logo_path": logo_path}
-        with open('neura_trace_config.json', 'w') as f:
+        with open(_CONFIG_FILE, 'w') as f:
             json.dump(config, f)
         return True
     return False
 
 def load_logo_config():
-    """Load logo path from config file"""
+    """Load logo path from config file in DATA_DIR"""
     try:
-        if os.path.exists('neura_trace_config.json'):
-            with open('neura_trace_config.json', 'r') as f:
+        if os.path.exists(_CONFIG_FILE):
+            with open(_CONFIG_FILE, 'r') as f:
                 config = json.load(f)
                 return config.get('logo_path')
     except:
@@ -276,13 +280,13 @@ inject_css()
 # ============================
 
 def load_app_config():
-    """Load app configurations from config file"""
+    """Load app configurations from config file in DATA_DIR"""
     config = {
-        "save_path": r"E:\Backup\Desktop\NT\saved_scans"
+        "save_path": _DEFAULT_SAVE_PATH
     }
     try:
-        if os.path.exists('neura_trace_config.json'):
-            with open('neura_trace_config.json', 'r') as f:
+        if os.path.exists(_CONFIG_FILE):
+            with open(_CONFIG_FILE, 'r') as f:
                 saved_config = json.load(f)
                 if 'save_path' in saved_config:
                     config['save_path'] = saved_config['save_path']
@@ -1483,10 +1487,10 @@ def show_logo_settings_page():
         )
         
         if uploaded_file is not None:
-            upload_dir = "uploads/logos"
-            os.makedirs(upload_dir, exist_ok=True)
-            
-            file_path = os.path.join(upload_dir, uploaded_file.name)
+            logo_dir = DATA_DIR / "uploads" / "logos"
+            logo_dir.mkdir(parents=True, exist_ok=True)
+
+            file_path = str(logo_dir / uploaded_file.name)
             with open(file_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
@@ -1524,8 +1528,11 @@ def show_logo_settings_page():
         if st.session_state.get('logo_path'):
             if st.button("🔄 Reset to Default", use_container_width=True):
                 st.session_state.logo_path = None
-                if os.path.exists('neura_trace_config.json'):
-                    os.remove('neura_trace_config.json')
+                config_path = str(DATA_DIR / 'neura_trace_config.json')
+                if os.path.exists(_CONFIG_FILE):
+                    os.remove(_CONFIG_FILE)
+                if os.path.exists(config_path):
+                    os.remove(config_path)
                 st.success("✅ Reset to default icon")
                 time.sleep(1)
                 st.rerun()

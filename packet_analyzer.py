@@ -475,15 +475,16 @@ class PacketAnalyzer:
         
         # Save local log (using custom path from config if available)
         save_path = r"E:\Backup\Desktop\NT\saved_scans"
+        _cfg_file = os.path.join(save_path, 'neura_trace_config.json')
         try:
-            if os.path.exists('neura_trace_config.json'):
-                with open('neura_trace_config.json', 'r') as f:
+            if os.path.exists(_cfg_file):
+                with open(_cfg_file, 'r') as f:
                     cfg = json.load(f)
                     if 'save_path' in cfg:
                         save_path = cfg['save_path']
         except Exception:
             pass
-            
+
         os.makedirs(save_path, exist_ok=True)
         with open(os.path.join(save_path, 'neura_trace_usage.log'), 'a') as f:
             f.write(json.dumps(log_entry) + '\n')
@@ -776,7 +777,7 @@ def main():
     parser.add_argument('-i', '--interface', type=str, help="Network interface to capture packets from")
     parser.add_argument('-p', '--protocol', type=str, help="Protocol to filter (e.g., TCP, UDP, HTTP)")
     parser.add_argument('-c', '--count', type=int, default=100, help="Number of packets to capture")
-    parser.add_argument('-o', '--output', type=str, default="saved_scans/captured_packets.pcap", help="Output file")
+    parser.add_argument('-o', '--output', type=str, default=r"E:\Backup\Desktop\NT\saved_scans\captures\captured_packets.pcap", help="Output file")
     
     # Analysis arguments
     parser.add_argument('--list_interfaces', action='store_true', help="List available network interfaces")
