@@ -709,10 +709,7 @@ def show_capture_page(dashboard):
     """Live capture page"""
     st.markdown('<h1 class="main-header">🎯 Live Packet Capture</h1>', unsafe_allow_html=True)
     
-    if st.session_state.get("user_role") not in ["ADMIN"]:
-        st.error("🔒 UNAUTHORIZED: Your current clearance level prohibits initiating raw socket captures.")
-        st.stop()
-    
+
     with st.container():
         st.markdown("### Capture Configuration")
         
@@ -835,10 +832,7 @@ def show_port_scanner_page(dashboard):
     """Port scanner with integrated service detection page"""
     st.markdown('<h1 class="main-header">🔍 Port Scanner with Service Detection</h1>', unsafe_allow_html=True)
     
-    if st.session_state.get("user_role") not in ["ADMIN", "ANALYST"]:
-        st.error("🔒 UNAUTHORIZED: Your current clearance level prohibits initiating active network reconnaissance.")
-        st.stop()
-    
+
     with st.container():
         st.markdown("""
         ### Integrated Port & Service Scanner
