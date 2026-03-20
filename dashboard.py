@@ -1390,7 +1390,7 @@ def show_settings_page():
     st.markdown('<h1 class="main-header">⚙️ Settings</h1>', unsafe_allow_html=True)
     
     # Create tabs for settings
-    tab1, tab2, tab3 = st.tabs(["🖥️ Display", "🤖 AI Configuration", "📁 Storage"])
+    tab1, tab2 = st.tabs(["🖥️ Display", "📁 Storage"])
     
     with tab1:
         st.subheader("Display Settings")
@@ -1409,7 +1409,7 @@ def show_settings_page():
                 st.session_state.refresh_interval = refresh_interval
                 st.success("Display settings saved!")
 
-    with tab3:
+    with tab2:
         st.subheader("Data Storage Settings")
         with st.form("storage_settings_form"):
             current_config = {}
@@ -1429,44 +1429,6 @@ def show_settings_page():
                     with open('neura_trace_config.json', 'w') as f:
                         json.dump(current_config, f)
                     st.success("Storage path saved! Changes apply immediately to new saves.")
-
-    with tab2:
-        st.subheader("AI Configuration")
-        st.markdown("""
-        Configure your AI settings for enhanced security analysis.
-        You can use your own custom Google AI API key.
-        """)
-        
-        # Load existing key from session or environment
-        current_key = st.session_state.get('gemini_api_key', os.environ.get('GEMINI_API_KEY', ''))
-        
-        with st.form("ai_settings_form"):
-            api_key = st.text_input(
-                "AI API Key", 
-                value=current_key,
-                type="password",
-                help="Enter your Google AI API key"
-            )
-            
-            st.caption("Get your free API key from [Google AI Studio](https://makersuite.google.com/app/apikey)")
-            
-            if st.form_submit_button("💾 Save AI Configuration", use_container_width=True):
-                if api_key:
-                    st.session_state.gemini_api_key = api_key
-                    # Test the key
-                    if AI_AVAILABLE:
-                        try:
-                            test_analyzer = AIAnalyzer(api_key)
-                            if test_analyzer.is_available():
-                                st.success("✅ API Key saved and verified!")
-                            else:
-                                st.warning("⚠️ API Key saved but verification failed.")
-                        except Exception as e:
-                            st.error(f"Error testing API key: {e}")
-                    else:
-                        st.success("API Key saved (AI modules not loaded)")
-                else:
-                    st.warning("Please enter an API key")
     
     st.divider()
     
