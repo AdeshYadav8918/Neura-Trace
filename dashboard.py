@@ -269,17 +269,37 @@ inject_css()
 # DASHBOARD CLASS
 # ============================
 
+def load_app_config():
+    """Load app configurations from config file"""
+    config = {
+        "save_path": r"E:\Backup\Desktop\NT\saved_scans"
+    }
+    try:
+        if os.path.exists('neura_trace_config.json'):
+            with open('neura_trace_config.json', 'r') as f:
+                saved_config = json.load(f)
+                if 'save_path' in saved_config:
+                    config['save_path'] = saved_config['save_path']
+    except:
+        pass
+    return config
+
+app_config = load_app_config()
+
 # Private data directory - all user data stored here (excluded from git)
-DATA_DIR = Path("saved_scans")
+DATA_DIR = Path(app_config["save_path"])
 UPLOADS_DIR = DATA_DIR / "uploads"
 CAPTURES_DIR = DATA_DIR / "captures"
 HISTORY_DIR = DATA_DIR / "history"
 
 # Ensure data directories exist
-DATA_DIR.mkdir(exist_ok=True)
-UPLOADS_DIR.mkdir(exist_ok=True)
-CAPTURES_DIR.mkdir(exist_ok=True)
-HISTORY_DIR.mkdir(exist_ok=True)
+try:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+except Exception as e:
+    logging.error(f"Failed to create data directories: {e}")
 
 class NeuraTraceDashboard:
     def __init__(self):
@@ -713,7 +733,7 @@ def show_capture_page(dashboard):
             st.divider()
             st.subheader("🤖 AI Traffic Analysis")
             
-            api_key = st.session_state.get('gemini_api_key', '')
+            api_key = st.session_state.get('gemini_api_key', os.environ.get('GEMINI_API_KEY', ''))
             ai_enabled = st.session_state.get('enable_ai_traffic', True)
             
             if not api_key:
@@ -1365,7 +1385,7 @@ def show_settings_page():
     st.markdown('<h1 class="main-header">⚙️ Settings</h1>', unsafe_allow_html=True)
     
     # Create tabs for settings
-    tab1, tab2 = st.tabs(["🖥️ Display", "🤖 AI Configuration"])
+    tab1, tab2, tab3 = st.tabs(["🖥️ Display", "🤖 AI Configuration", "📁 Storage"])
     
     with tab1:
         st.subheader("Display Settings")
@@ -1383,6 +1403,27 @@ def show_settings_page():
                 st.session_state.display_theme = theme
                 st.session_state.refresh_interval = refresh_interval
                 st.success("Display settings saved!")
+
+    with tab3:
+        st.subheader("Data Storage Settings")
+        with st.form("storage_settings_form"):
+            current_config = {}
+            if os.path.exists('neura_trace_config.json'):
+                try:
+                    with open('neura_trace_config.json', 'r') as f:
+                        current_config = json.load(f)
+                except:
+                    pass
+            
+            default_path = current_config.get("save_path", r"E:\Backup\Desktop\NT\saved_scans")
+            new_save_path = st.text_input("Custom Save Path", value=default_path)
+            
+            if st.form_submit_button("💾 Save Storage Settings", use_container_width=True):
+                if new_save_path:
+                    current_config['save_path'] = new_save_path
+                    with open('neura_trace_config.json', 'w') as f:
+                        json.dump(current_config, f)
+                    st.success("Storage path saved! Changes apply immediately to new saves.")
 
     with tab2:
         st.subheader("AI Configuration")

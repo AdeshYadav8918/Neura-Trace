@@ -473,9 +473,19 @@ class PacketAnalyzer:
             'action': 'initialized'
         }
         
-        # Save local log
-        os.makedirs('saved_scans', exist_ok=True)
-        with open('saved_scans/neura_trace_usage.log', 'a') as f:
+        # Save local log (using custom path from config if available)
+        save_path = r"E:\Backup\Desktop\NT\saved_scans"
+        try:
+            if os.path.exists('neura_trace_config.json'):
+                with open('neura_trace_config.json', 'r') as f:
+                    cfg = json.load(f)
+                    if 'save_path' in cfg:
+                        save_path = cfg['save_path']
+        except Exception:
+            pass
+            
+        os.makedirs(save_path, exist_ok=True)
+        with open(os.path.join(save_path, 'neura_trace_usage.log'), 'a') as f:
             f.write(json.dumps(log_entry) + '\n')
     
     def _display_legal_warning(self):
