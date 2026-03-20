@@ -382,8 +382,9 @@ class NeuraTraceDashboard:
                 return False, "", "Security Violation: Packet count exceeds hard limits (50000 max)"
 
             safe_out = os.path.abspath(output_file)
-            if not safe_out.startswith(os.path.abspath(os.getcwd())):
-                return False, "", "Security Violation: Path Traversal Attempt Blocked"
+            allowed_base = os.path.abspath(str(DATA_DIR))
+            if not safe_out.startswith(allowed_base):
+                return False, "", "Security Violation: Output path must be within the configured save directory"
 
             cmd = ['python', 'packet_analyzer.py',
                    '-i', interface,
