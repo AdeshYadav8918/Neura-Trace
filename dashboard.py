@@ -372,46 +372,71 @@ class NeuraTraceDashboard:
             return ['eth0', 'wlan0', 'en0', 'lo', 'any']
     
     def run_capture(self, interface, count, protocol, output_file):
-        """Run packet capture using the CLI tool"""
+        """Run packet capture via privileged IPC daemon (Privilege Separation enforced)"""
         import re
+        import socket as _socket
         try:
-            # STRICT INPUT VALIDATION
+            # STRICT INPUT VALIDATION (Zero Trust - validate before sending to daemon)
             if not re.match(r'^[a-zA-Z0-9.\-_ \(\)]+$', interface):
                 return False, "", "Security Violation: Invalid network interface characters"
-            if not isinstance(count, int) or not (1 <= count <= 50000): # DoS Protection
+            if not isinstance(count, int) or not (1 <= count <= 50000):
                 return False, "", "Security Violation: Packet count exceeds hard limits (50000 max)"
-            
+
             safe_out = os.path.abspath(output_file)
             if not safe_out.startswith(os.path.abspath(os.getcwd())):
                 return False, "", "Security Violation: Path Traversal Attempt Blocked"
 
-            cmd = ['python', 'packet_analyzer.py', 
-                   '-i', interface,
-                   '-c', str(count),
-                   '-o', safe_out]
-            
-            if protocol and protocol != "All":
-                cmd.extend(['-p', protocol])
-            
-            # Enforce execution timeout for DoS resilience
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            
+            # Build IPC instruction payload
+            ipc_request = json.dumps({
+                "action": "capture",
+                "interface": interface,
+                "count": count,
+                "protocol": protocol if protocol and protocol != "All" else None,
+                "output": safe_out
+            }).encode('utf-8')
+
+            # Contact the privileged capture daemon over local loopback ONLY
+            try:
+                with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as sock:
+                    sock.settimeout(310)  # IPC timeout > max capture duration
+                    sock.connect(('127.0.0.1', 50051))
+                    sock.sendall(ipc_request)
+
+                    chunks = []
+                    while True:
+                        chunk = sock.recv(8192)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                    response = json.loads(b''.join(chunks).decode('utf-8'))
+
+            except ConnectionRefusedError:
+                return False, "", (
+                    "Privilege Daemon Offline: capture_daemon.py must be running with "
+                    "elevated privileges. Run: python capture_daemon.py (as Administrator)"
+                )
+            except _socket.timeout:
+                return False, "", "IPC Daemon timed out. Capture may still be running."
+
+            success = response.get("status") == "success"
+            stdout = response.get("stdout", "")
+            stderr = response.get("stderr", "")
+
             capture_info = {
                 'timestamp': datetime.now().isoformat(),
                 'interface': interface,
                 'protocol': protocol or 'All',
                 'packet_count': count,
-                'output_file': output_file,
-                'status': 'success' if result.returncode == 0 else 'failed',
-                'command': ' '.join(cmd),
-                'stdout': result.stdout,
-                'stderr': result.stderr
+                'output_file': safe_out,
+                'status': 'success' if success else 'failed',
+                'stdout': stdout,
+                'stderr': stderr
             }
-            
+
             self.capture_history.append(capture_info)
             self.save_history()
-            
-            return result.returncode == 0, result.stdout, result.stderr
+
+            return success, stdout, stderr
         except Exception as e:
             return False, "", str(e)
     
