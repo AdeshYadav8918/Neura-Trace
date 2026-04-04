@@ -1,12 +1,12 @@
-streamlit==1.28.0
+streamlit==1.37.0
 pandas==2.0.0
 plotly==5.17.0
 pyshark==0.6.0
 psutil==5.9.0
-scapy==2.5.0
-Pillow==10.0.0
+scapy==2.7.0rc1
+Pillow==12.1.1
 ipaddress==1.0.23
-cryptography==41.0.4
+cryptography==46.0.5
 google-generativeai==0.3.2
 streamlit-float==0.3.0
 streamlit-option-menu==0.3.12
