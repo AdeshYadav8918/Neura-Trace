@@ -35,6 +35,21 @@ def handle_secure_request(req):
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         return {"status": "success" if res.returncode == 0 else "error", "stdout": res.stdout, "stderr": res.stderr}
         
+    elif action == "port_scan":
+        target = req.get("target", "")
+        ports = req.get("ports", "1-1024")
+        
+        if not re.match(r'^[a-zA-Z0-9.\-_]+$', target):
+            return {"status": "error", "message": "Invalid target."}
+            
+        if not re.match(r'^[0-9\-]+$', ports):
+            return {"status": "error", "message": "Invalid port string."}
+            
+        logging.info(f"Executing authorized port scan on {target}:{ports}")
+        cmd = ['python', 'packet_analyzer.py', '--scan', target, '--ports', ports, '--json', '--analyze-security']
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        return {"status": "success" if res.returncode == 0 else "error", "stdout": res.stdout, "stderr": res.stderr}
+        
     return {"status": "error", "message": "Unknown or forbidden action"}
 
 def start_ipc_server():

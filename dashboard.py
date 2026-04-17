@@ -32,19 +32,6 @@ if os.path.exists('.env'):
                 k, v = line.strip().split('=', 1)
                 os.environ[k.strip()] = v.strip().strip("'\"")
 
-# Import AI modules
-try:
-    from ai_analyzer import AIAnalyzer
-    AI_AVAILABLE = True
-except ImportError:
-    AI_AVAILABLE = False
-
-# Import CVE Lookup (independent of AI)
-try:
-    from cve_lookup import CVELookup
-except ImportError:
-    pass # Handle gracefully if missing
-
 # Set page favicon - use logo if available
 _logo_path = "logo.png"
 _page_icon = _logo_path if os.path.exists(_logo_path) else "🛡️"
@@ -377,6 +364,25 @@ class NeuraTraceDashboard:
         except:
             return ['eth0', 'wlan0', 'en0', 'lo', 'any']
     
+    def _send_ipc_request(self, payload):
+        try:
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.settimeout(300)
+            client.connect(('127.0.0.1', 50051))
+            client.sendall(json.dumps(payload).encode('utf-8'))
+            
+            response_data = b""
+            while True:
+                chunk = client.recv(4096)
+                if not chunk: break
+                response_data += chunk
+            
+            client.close()
+            resp = json.loads(response_data.decode('utf-8'))
+            return resp.get("status") == "success", resp.get("stdout", ""), resp.get("stderr", "")
+        except Exception as e:
+            return False, "", f"IPC Daemon Error: {str(e)}"
+            
     def run_capture(self, interface, count, protocol, output_file):
         """Run packet capture using the CLI tool"""
         import re
@@ -392,15 +398,14 @@ class NeuraTraceDashboard:
             if not safe_out.startswith(allowed_base):
                 return False, "", "Security Violation: Output path must be within the configured save directory"
 
-            cmd = ['python', 'packet_analyzer.py',
-                   '-i', interface,
-                   '-c', str(count),
-                   '-o', safe_out]
-
-            if protocol and protocol != "All":
-                cmd.extend(['-p', protocol])
-
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            req = {
+                "action": "capture",
+                "interface": interface,
+                "count": count,
+                "output": safe_out
+            }
+            
+            success, stdout, stderr = self._send_ipc_request(req)
 
             capture_info = {
                 'timestamp': datetime.now().isoformat(),
@@ -408,15 +413,15 @@ class NeuraTraceDashboard:
                 'protocol': protocol or 'All',
                 'packet_count': count,
                 'output_file': safe_out,
-                'status': 'success' if result.returncode == 0 else 'failed',
-                'stdout': result.stdout,
-                'stderr': result.stderr
+                'status': 'success' if success else 'failed',
+                'stdout': stdout,
+                'stderr': stderr
             }
 
             self.capture_history.append(capture_info)
             self.save_history()
 
-            return result.returncode == 0, result.stdout, result.stderr
+            return success, stdout, stderr
         except Exception as e:
             return False, "", str(e)
     
@@ -432,31 +437,28 @@ class NeuraTraceDashboard:
             if not self._validate_scan_request(target_ip, start_port, end_port):
                 return False, "", "Validation failed"
             
-            cmd = ['python', 'packet_analyzer.py',
-                   '--scan', target_ip,
-                   '--ports', f'{start_port}-{end_port}',
-                   '--json']
+            req = {
+                "action": "port_scan",
+                "target": target_ip,
+                "ports": f'{start_port}-{end_port}'
+            }
             
-            if analyze_security:
-                cmd.append('--analyze-security')
-            
-            # Enforce execution timeout for DoS resilience
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            success, stdout, stderr = self._send_ipc_request(req)
             
             scan_info = {
                 'timestamp': datetime.now().isoformat(),
                 'target': target_ip,
                 'port_range': f'{start_port}-{end_port}',
                 'security_analysis': analyze_security,
-                'status': 'success' if result.returncode == 0 else 'failed',
-                'stdout': result.stdout,
-                'stderr': result.stderr
+                'status': 'success' if success else 'failed',
+                'stdout': stdout,
+                'stderr': stderr
             }
             
             self.scan_history.append(scan_info)
             self.save_history()
             
-            return result.returncode == 0, result.stdout, result.stderr
+            return success, stdout, stderr
         except Exception as e:
             return False, "", str(e)
     
@@ -760,18 +762,15 @@ def show_capture_page(dashboard):
                         with st.expander("Capture Output"):
                             st.code(stdout)
                             
-                        # ---- AUTOMATED AI BRAIN CHECK ----
-                        if st.session_state.get("gemini_api_key"):
-                            with st.spinner("🧠 AI Brain analyzing capture..."):
-                                from ai_brain import AIBrain
-                                brain = AIBrain(st.session_state.gemini_api_key)
-                                verdict = brain.analyze_live_capture(stdout)
-                                if "[SAFE]" in verdict:
-                                    st.success(verdict)
-                                else:
-                                    st.error(verdict)
-                        else:
-                            st.info("💡 Set your Gemini API Key in Settings to enable automated AI Brain analysis.")
+                        # ---- AUTOMATED OFFLINE SECURITY CHECK ----
+                        with st.spinner("🔒 Local Engine analyzing capture..."):
+                            from local_security_engine import LocalSecurityEngine
+                            engine = LocalSecurityEngine()
+                            verdict = engine.analyze_live_capture(stdout)
+                            if "[SAFE]" in verdict:
+                                st.success(verdict)
+                            else:
+                                st.error(verdict)
                     
                     if os.path.exists(output_file):
                         file_size = os.path.getsize(output_file) / 1024
@@ -949,20 +948,17 @@ def show_port_scanner_page(dashboard):
                                                 
                                             st.markdown('</div>', unsafe_allow_html=True)
                                     
-                                    # ---- AUTOMATED AI BRAIN CHECK ----
+                                    # ---- AUTOMATED OFFLINE SECURITY CHECK ----
                                     st.divider()
-                                    if st.session_state.get("gemini_api_key"):
-                                        with st.spinner("🧠 AI Brain analyzing open ports..."):
-                                            from ai_brain import AIBrain
-                                            brain = AIBrain(st.session_state.gemini_api_key)
-                                            port_summary = json.dumps(open_ports)
-                                            verdict = brain.analyze_port_scan(port_summary)
-                                            if "[SAFE]" in verdict:
-                                                st.success(verdict)
-                                            else:
-                                                st.error(verdict)
-                                    else:
-                                        st.info("💡 Set your Gemini API Key in Settings to enable automated AI Brain analysis.")
+                                    with st.spinner("🔒 Local Engine analyzing open ports..."):
+                                        from local_security_engine import LocalSecurityEngine
+                                        engine = LocalSecurityEngine()
+                                        port_summary = json.dumps(open_ports)
+                                        verdict = engine.analyze_port_scan(port_summary)
+                                        if "[SAFE]" in verdict:
+                                            st.success(verdict)
+                                        else:
+                                            st.error(verdict)
 
                                 else:
                                     st.info("No open ports found")
@@ -1046,25 +1042,22 @@ def show_analyze_page(dashboard):
                                 # Store PCAP analysis results for AI
                                 st.session_state.pcap_analysis = results
                                 
-                        # ---- AUTOMATED AI BRAIN CHECK ----
-                        if "gemini_api_key" in st.session_state:
-                            st.divider()
-                            with st.spinner("🧠 AI Brain checking file structure for anomalies..."):
-                                from ai_brain import AIBrain
-                                brain = AIBrain(st.session_state.gemini_api_key)
-                                pcap_summary = {
-                                    'total_packets': results.get('summary', {}).get('total_packets', 0),
-                                    'protocols': results.get('summary', {}).get('protocols', []),
-                                    'source_ips': results.get('summary', {}).get('source_ips', [])[:50],  # cap for context length
-                                    'dest_ips': results.get('summary', {}).get('dest_ips', [])[:50]
-                                }
-                                verdict = brain.analyze_pcap_structure(json.dumps(pcap_summary))
-                                if "[SAFE]" in verdict:
-                                    st.success(verdict)
-                                else:
-                                    st.error(verdict)
-                        else:
-                            st.info("💡 Set your Gemini API Key in Settings to enable automated AI PCAP analysis.")
+                        # ---- AUTOMATED OFFLINE SECURITY CHECK ----
+                        st.divider()
+                        with st.spinner("🔒 Local Engine checking file structure for anomalies..."):
+                            from local_security_engine import LocalSecurityEngine
+                            engine = LocalSecurityEngine()
+                            pcap_summary = {
+                                'total_packets': results.get('summary', {}).get('total_packets', 0),
+                                'protocols': results.get('summary', {}).get('protocols', []),
+                                'source_ips': results.get('summary', {}).get('source_ips', [])[:50],  # cap for context length
+                                'dest_ips': results.get('summary', {}).get('dest_ips', [])[:50]
+                            }
+                            verdict = engine.analyze_pcap_structure(json.dumps(pcap_summary))
+                            if "[SAFE]" in verdict:
+                                st.success(verdict)
+                            else:
+                                st.error(verdict)
                             
                         # Missing block fallback (non-dict results)
                         if not isinstance(results, dict):
@@ -1124,10 +1117,7 @@ def show_device_security_page(dashboard):
         st.divider()
         
         if st.button("🚀 Start Independent Security Audit", type="primary", use_container_width=True):
-            if not st.session_state.get("gemini_api_key"):
-                st.error("❌ Gemini API Key missing. Please provide it in the Settings menu.")
-            else:
-                with st.spinner(f"AI Brain is auditing {target_ip} (this may take a moment)..."):
+            with st.spinner(f"Local Engine is auditing {target_ip} (this may take a moment)..."):
                     # 1. Run Port Scan
                     success, stdout, stderr = dashboard.run_port_scan_with_services(
                         target_ip=target_ip,
@@ -1162,24 +1152,12 @@ def show_device_security_page(dashboard):
                                     'raw_results': results
                                 }
                                 
-                                # 2. CVE Lookup
-                                cve_list = []
-                                try:
-                                    cve_lookup = CVELookup(st.session_state.get('nvd_api_key'))
-                                    for p, s in open_ports.items():
-                                        details = results.get('service_details', {}).get(str(p), {})
-                                        res = cve_lookup.get_cves_for_service(s, details.get('banner', ''))
-                                        if res.get('cves'):
-                                            cve_list.extend(res['cves'])
-                                except Exception:
-                                    pass # Ignore CVE errors for now
-                                
-                                # 3. AUTOMATED AI BRAIN CHECK
+                                # 3. AUTOMATED OFFLINE SECURITY CHECK
                                 st.divider()
-                                st.subheader("🛡️ AI Security Audit")
-                                from ai_brain import AIBrain
-                                brain = AIBrain(st.session_state.gemini_api_key)
-                                verdict = brain.analyze_device_security(json.dumps(scan_data), cve_list)
+                                st.subheader("🛡️ Offline Security Audit")
+                                from local_security_engine import LocalSecurityEngine
+                                engine = LocalSecurityEngine()
+                                verdict = engine.analyze_device_security(json.dumps(scan_data))
                                 if "[SAFE]" in verdict:
                                     st.success(verdict)
                                 else:
@@ -1246,41 +1224,7 @@ def show_history_page(dashboard):
 def show_settings_page():
     """Settings page"""
     st.markdown('<h1 class="main-header">⚙️ Settings</h1>', unsafe_allow_html=True)
-
-    # ── Gemini API Configuration ────────────────────────────────────────────────
-    st.subheader("🤖 AI Brain Configuration")
-    st.caption("NeuraTrace uses Google Gemini 1.5 Flash for rapid, automated security auditing.")
-
-    with st.container(border=True):
-        gemini_key = st.text_input(
-            "Gemini API Key",
-            value=st.session_state.get("gemini_api_key", os.environ.get("GEMINI_API_KEY", "")),
-            type="password",
-            help="Free API key from Google AI Studio."
-        )
-
-        col_save, col_test = st.columns(2)
-        with col_save:
-            if st.button("💾 Save AI Settings", use_container_width=True, type="primary"):
-                st.session_state.gemini_api_key = gemini_key
-                st.success("✅ Gemini API Key saved for active session.")
-        
-        with col_test:
-            if st.button("🔗 Test Connection", use_container_width=True):
-                try:
-                    from ai_brain import AIBrain
-                    brain = AIBrain(gemini_key)
-                    if brain.is_available():
-                        res = brain._generate_strict_verdict("Say [SAFE]")
-                        if "SAFE" in res:
-                            st.success("✅ Successfully connected to Gemini 1.5 Flash.")
-                        else:
-                            st.error(f"❌ Key works, but unexpected answer: {res}")
-                    else:
-                        st.error("❌ Key not valid or initialized.")
-                except Exception as e:
-                    st.error(f"❌ Connection testing failed: {e}")
-
+    
     st.divider()
 
     # ── Display Settings ───────────────────────────────────────────────────────
@@ -1528,6 +1472,27 @@ def create_sidebar(dashboard):
 
 def main():
     float_init()
+    
+    # ── AUTHENTICATION WALL ──
+    if not st.session_state.get("authenticated"):
+        st.markdown('<h1 class="main-header" style="text-align: center;">🛡️ NeuraTrace Core</h1>', unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #9CA3AF;'>High-Assurance Network Intelligence Platform</p>", unsafe_allow_html=True)
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        with st.container():
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                with st.container(border=True):
+                    st.markdown("### Authentication Required")
+                    user = st.text_input("Username")
+                    pwd = st.text_input("Password", type="password")
+                    if st.button("Login", type="primary", use_container_width=True):
+                        if user == os.environ.get("AUTH_USER") and pwd == os.environ.get("AUTH_PASS"):
+                            st.session_state.authenticated = True
+                            st.rerun()
+                        else:
+                            st.error("Invalid credentials.")
+        return
+
     # Initialize session state
     if 'page' not in st.session_state:
         st.session_state.page = "Dashboard"
