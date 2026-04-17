@@ -15,6 +15,7 @@ import base64
 from crypto_vault import vault
 from PIL import Image
 import io
+import logging
 from streamlit_float import *
 import streamlit.components.v1 as components
 import requests
@@ -80,7 +81,8 @@ def get_logo_base64(image_path=None):
     return None
 
 # Config file lives in the custom save directory, not the project folder
-_DEFAULT_SAVE_PATH = r"E:\Backup\Desktop\NT\saved_scans"
+# NEURATRACE_DATA_DIR env var is injected by Docker — falls back to local Windows path
+_DEFAULT_SAVE_PATH = os.environ.get("NEURATRACE_DATA_DIR", r"E:\Backup\Desktop\NT\saved_scans")
 _CONFIG_FILE = os.path.join(_DEFAULT_SAVE_PATH, 'neura_trace_config.json')
 
 def save_logo_path(logo_path):
@@ -549,13 +551,12 @@ def metric_cards(dashboard):
 def feature_grid():
     """Renders the robust interactive UI tool grid with placeholders"""
     st.markdown("### ⚡ Platform Toolkit")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         with st.container(border=True):
             st.markdown("#### 🎯 Live")
             st.caption("Real-time network capture filtering")
-            # SaaS Dummy placeholder logic demoing interaction elements
             st.text_input("Interface", key="pl_int", placeholder="eth0...", help="Physical network adapter to capture from", label_visibility="collapsed")
             if st.button("Start Capture", key="dashboard_capture", use_container_width=True, type="primary"):
                 with st.spinner("Initializing Engine..."):
@@ -758,6 +759,19 @@ def show_capture_page(dashboard):
                     if stdout:
                         with st.expander("Capture Output"):
                             st.code(stdout)
+                            
+                        # ---- AUTOMATED AI BRAIN CHECK ----
+                        if st.session_state.get("gemini_api_key"):
+                            with st.spinner("🧠 AI Brain analyzing capture..."):
+                                from ai_brain import AIBrain
+                                brain = AIBrain(st.session_state.gemini_api_key)
+                                verdict = brain.analyze_live_capture(stdout)
+                                if "[SAFE]" in verdict:
+                                    st.success(verdict)
+                                else:
+                                    st.error(verdict)
+                        else:
+                            st.info("💡 Set your Gemini API Key in Settings to enable automated AI Brain analysis.")
                     
                     if os.path.exists(output_file):
                         file_size = os.path.getsize(output_file) / 1024
@@ -768,70 +782,7 @@ def show_capture_page(dashboard):
                         with st.expander("Error Details"):
                             st.code(stderr)
         
-        # AI Traffic Analysis Section
-        if 'last_capture' in st.session_state:
-            st.divider()
-            st.subheader("🤖 AI Traffic Analysis")
-            
-            api_key = st.session_state.get('gemini_api_key', os.environ.get('GEMINI_API_KEY', ''))
-            ai_enabled = st.session_state.get('enable_ai_traffic', True)
-            
-            if not api_key:
-                st.info("💡 Configure your Gemini API key in Settings to enable AI traffic analysis")
-            elif not AI_AVAILABLE:
-                st.warning("AI modules not available. Check installation.")
-            elif ai_enabled:
-                if st.button("🧠 Analyze Traffic with AI", use_container_width=True, key="ai_traffic_btn"):
-                    with st.spinner("AI analyzing captured traffic..."):
-                        try:
-                            analyzer = AIAnalyzer(api_key)
-                            
-                            # Parse capture output for analysis
-                            capture_data = st.session_state.last_capture
-                            packets_summary = {
-                                'total_packets': capture_data.get('packet_count', 0),
-                                'protocols': [capture_data.get('protocol', 'All')],
-                                'source_ips': [],
-                                'dest_ips': [],
-                                'duration': 'Recent capture'
-                            }
-                            
-                            # Extract IPs from stdout if available
-                            stdout = capture_data.get('stdout', '')
-                            if stdout:
-                                import re
-                                ips = re.findall(r'\d+\.\d+\.\d+\.\d+', stdout)
-                                if ips:
-                                    packets_summary['source_ips'] = list(set(ips[:10]))
-                                    packets_summary['dest_ips'] = list(set(ips[10:20]))
-                            
-                            ai_result = analyzer.analyze_live_traffic(packets_summary)
-                            st.session_state.ai_traffic_result = ai_result
-                        except Exception as e:
-                            st.error(f"AI analysis failed: {e}")
-            
-            # Display AI Traffic Analysis Results
-            if 'ai_traffic_result' in st.session_state:
-                ai_result = st.session_state.ai_traffic_result
-                if ai_result.get('_meta', {}).get('status') == 'success':
-                    with st.expander("🧠 AI Traffic Analysis Results", expanded=True):
-                        risk = ai_result.get('risk_level', 'N/A')
-                        st.metric("Risk Level", risk)
-                        
-                        st.markdown("**Traffic Summary**")
-                        st.info(ai_result.get('traffic_summary', 'No summary available'))
-                        
-                        if ai_result.get('anomalies_detected'):
-                            st.markdown("**🚨 Anomalies Detected**")
-                            for anomaly in ai_result.get('anomalies_detected', []):
-                                st.warning(anomaly)
-                        
-                        if ai_result.get('recommendations'):
-                            st.markdown("**💡 Recommendations**")
-                            for rec in ai_result.get('recommendations', []):
-                                st.markdown(f"• {rec}")
-                elif ai_result.get('error'):
-                    st.error(f"AI Error: {ai_result.get('error')}")
+
 
 def show_port_scanner_page(dashboard):
     """Port scanner with integrated service detection page"""
@@ -998,47 +949,20 @@ def show_port_scanner_page(dashboard):
                                                 
                                             st.markdown('</div>', unsafe_allow_html=True)
                                     
-                                    # Restored Security Analysis Section
-                                    if analyze_security:
-                                        st.divider()
-                                        st.subheader("🛡️ Security Analysis Summary")
-                                        
-                                        # AI Analysis Logic (Restored)
-                                        api_key = st.session_state.get('gemini_api_key', '')
-                                        
-                                        col_cve, col_ai = st.columns(2)
-                                        with col_cve:
-                                            if st.button("🔍 CVE Lookup", use_container_width=True, key="ps_cve_btn"):
-                                                 with st.spinner("Checking CVEs..."):
-                                                     try:
-                                                         cve_lookup = CVELookup(st.session_state.get('nvd_api_key'))
-                                                         all_cves = []
-                                                         for port, service in open_ports.items():
-                                                             details = service_details.get(str(port), {})
-                                                             res = cve_lookup.get_cves_for_service(service, details.get('banner', ''))
-                                                             if res.get('cves'):
-                                                                 all_cves.append({'port': port, 'service': service, 'result': res})
-                                                         st.session_state.ps_cve_results = all_cves
-                                                         # Also save to device_cve_data for sync
-                                                         cve_data_flat = []
-                                                         for item in all_cves:
-                                                             cve_data_flat.extend(item['result'].get('cves', []))
-                                                         st.session_state.device_cve_data = cve_data_flat
-                                                         
-                                                         st.success(f"Found CVEs for {len(all_cves)} services")
-                                                     except Exception as e:
-                                                         st.error(f"CVE lookup error: {e}")
-
-                                        with col_ai:
-                                            if st.button("🧠 AI Analysis", use_container_width=True, key="ps_ai_btn"):
-                                                 # Port Scanner AI analysis logic
-                                                 pass # Placeholder as we mainly rely on Device Security page for full audit now
-                                                 st.info("Visit 'Device Security Audit' page for detailed AI Report")
-                                        
-                                        if 'ps_cve_results' in st.session_state:
-                                            with st.expander("📋 CVE Results", expanded=True):
-                                                for item in st.session_state.ps_cve_results:
-                                                    st.write(f"**{item['service']}**: {len(item['result']['cves'])} CVEs")
+                                    # ---- AUTOMATED AI BRAIN CHECK ----
+                                    st.divider()
+                                    if st.session_state.get("gemini_api_key"):
+                                        with st.spinner("🧠 AI Brain analyzing open ports..."):
+                                            from ai_brain import AIBrain
+                                            brain = AIBrain(st.session_state.gemini_api_key)
+                                            port_summary = json.dumps(open_ports)
+                                            verdict = brain.analyze_port_scan(port_summary)
+                                            if "[SAFE]" in verdict:
+                                                st.success(verdict)
+                                            else:
+                                                st.error(verdict)
+                                    else:
+                                        st.info("💡 Set your Gemini API Key in Settings to enable automated AI Brain analysis.")
 
                                 else:
                                     st.info("No open ports found")
@@ -1121,7 +1045,29 @@ def show_analyze_page(dashboard):
                                 
                                 # Store PCAP analysis results for AI
                                 st.session_state.pcap_analysis = results
+                                
+                        # ---- AUTOMATED AI BRAIN CHECK ----
+                        if "gemini_api_key" in st.session_state:
+                            st.divider()
+                            with st.spinner("🧠 AI Brain checking file structure for anomalies..."):
+                                from ai_brain import AIBrain
+                                brain = AIBrain(st.session_state.gemini_api_key)
+                                pcap_summary = {
+                                    'total_packets': results.get('summary', {}).get('total_packets', 0),
+                                    'protocols': results.get('summary', {}).get('protocols', []),
+                                    'source_ips': results.get('summary', {}).get('source_ips', [])[:50],  # cap for context length
+                                    'dest_ips': results.get('summary', {}).get('dest_ips', [])[:50]
+                                }
+                                verdict = brain.analyze_pcap_structure(json.dumps(pcap_summary))
+                                if "[SAFE]" in verdict:
+                                    st.success(verdict)
+                                else:
+                                    st.error(verdict)
                         else:
+                            st.info("💡 Set your Gemini API Key in Settings to enable automated AI PCAP analysis.")
+                            
+                        # Missing block fallback (non-dict results)
+                        if not isinstance(results, dict):
                             with st.expander("Raw Analysis Output"):
                                 st.code(results)
                     else:
@@ -1134,76 +1080,7 @@ def show_analyze_page(dashboard):
                 st.success("Upload cleared!")
                 st.rerun()
         
-        # AI Malicious Traffic Detection Section
-        if 'pcap_analysis' in st.session_state:
-            st.divider()
-            st.subheader("🤖 AI Malicious Traffic Detection")
-            
-            api_key = st.session_state.get('gemini_api_key', '')
-            ai_enabled = st.session_state.get('enable_ai_pcap', True)
-            
-            if not api_key:
-                st.info("💡 Configure your Gemini API key in Settings to enable AI malicious traffic detection")
-            elif not AI_AVAILABLE:
-                st.warning("AI modules not available. Check installation.")
-            elif ai_enabled:
-                if st.button("🔍 Detect Malicious Traffic with AI", use_container_width=True, key="ai_malware_btn"):
-                    with st.spinner("AI scanning for malicious patterns..."):
-                        try:
-                            analyzer = AIAnalyzer(api_key)
-                            pcap_data = st.session_state.pcap_analysis
-                            
-                            ai_result = analyzer.detect_malicious_traffic(pcap_data)
-                            st.session_state.ai_malware_result = ai_result
-                        except Exception as e:
-                            st.error(f"AI detection failed: {e}")
-            
-            # Display AI Malicious Traffic Detection Results
-            if 'ai_malware_result' in st.session_state:
-                ai_result = st.session_state.ai_malware_result
-                if ai_result.get('_meta', {}).get('status') == 'success':
-                    with st.expander("🔍 AI Threat Detection Results", expanded=True):
-                        threat_level = ai_result.get('threat_level', 'N/A')
-                        threat_color = {
-                            'CRITICAL': '🔴',
-                            'HIGH': '🟠',
-                            'MEDIUM': '🟡',
-                            'LOW': '🟢',
-                            'NONE': '⚪'
-                        }.get(threat_level, '⚪')
-                        
-                        st.metric("Threat Level", f"{threat_color} {threat_level}")
-                        
-                        if ai_result.get('malicious_indicators'):
-                            st.markdown("**🚨 Malicious Indicators**")
-                            for indicator in ai_result.get('malicious_indicators', []):
-                                st.error(f"**{indicator.get('type', 'Unknown')}** ({indicator.get('confidence', 'N/A')} confidence): {indicator.get('evidence', '')}")
-                        
-                        if ai_result.get('suspicious_ips'):
-                            st.markdown("**⚠️ Suspicious IPs**")
-                            for ip_info in ai_result.get('suspicious_ips', []):
-                                st.warning(f"`{ip_info.get('ip', 'N/A')}`: {ip_info.get('reason', '')}")
-                        
-                        if ai_result.get('attack_patterns'):
-                            st.markdown("**🎯 Attack Patterns Detected**")
-                            for pattern in ai_result.get('attack_patterns', []):
-                                st.markdown(f"• {pattern}")
-                        
-                        if ai_result.get('ioc_extracted'):
-                            st.markdown("**📋 Indicators of Compromise (IOC)**")
-                            for ioc in ai_result.get('ioc_extracted', []):
-                                st.code(ioc)
-                        
-                        if ai_result.get('recommendations'):
-                            st.markdown("**💡 Recommendations**")
-                            for rec in ai_result.get('recommendations', []):
-                                st.markdown(f"• {rec}")
-                        
-                        if ai_result.get('false_positive_notes'):
-                            st.markdown("**ℹ️ False Positive Notes**")
-                            st.info(ai_result.get('false_positive_notes'))
-                elif ai_result.get('error'):
-                    st.error(f"AI Error: {ai_result.get('error')}")
+
 
 def show_device_security_page(dashboard):
     """Device Security Audit page"""
@@ -1247,14 +1124,10 @@ def show_device_security_page(dashboard):
         st.divider()
         
         if st.button("🚀 Start Independent Security Audit", type="primary", use_container_width=True):
-            # Check for AI availability first
-            api_key = st.session_state.get('gemini_api_key', os.environ.get('GEMINI_API_KEY', ''))
-            if not api_key:
-                st.error("❌ AI API Key required for Security Audit. Please configure it in Settings.")
-            elif not AI_AVAILABLE:
-                st.error("❌ AI modules not installed. Cannot perform audit.")
+            if not st.session_state.get("gemini_api_key"):
+                st.error("❌ Gemini API Key missing. Please provide it in the Settings menu.")
             else:
-                with st.spinner(f"Auditing {target_ip} (this may take a moment)..."):
+                with st.spinner(f"AI Brain is auditing {target_ip} (this may take a moment)..."):
                     # 1. Run Port Scan
                     success, stdout, stderr = dashboard.run_port_scan_with_services(
                         target_ip=target_ip,
@@ -1301,11 +1174,17 @@ def show_device_security_page(dashboard):
                                 except Exception:
                                     pass # Ignore CVE errors for now
                                 
-                                # 3. AI Analysis
-                                analyzer = AIAnalyzer(api_key)
-                                ai_result = analyzer.analyze_device_security(scan_data, cve_list)
-                                st.session_state.dev_sec_result = ai_result
-                                st.rerun() # Refresh to show results
+                                # 3. AUTOMATED AI BRAIN CHECK
+                                st.divider()
+                                st.subheader("🛡️ AI Security Audit")
+                                from ai_brain import AIBrain
+                                brain = AIBrain(st.session_state.gemini_api_key)
+                                verdict = brain.analyze_device_security(json.dumps(scan_data), cve_list)
+                                if "[SAFE]" in verdict:
+                                    st.success(verdict)
+                                else:
+                                    st.error(verdict)
+                                
                             else:
                                 st.warning("No active services found to audit.")
                         except Exception as e:
@@ -1313,63 +1192,6 @@ def show_device_security_page(dashboard):
                     else:
                         st.error("Scan failed. Check target connectivity.")
                         if stderr: st.code(stderr)
-        
-        # Display Results
-        if 'dev_sec_result' in st.session_state:
-            ai_result = st.session_state.dev_sec_result
-            if ai_result:
-                st.divider()
-                st.subheader("📊 Audit Report")
-                
-                if ai_result.get('_meta', {}).get('status') == 'success':
-                    with st.container():
-                        # Header metrics
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            score = ai_result.get('device_security_score', 'N/A')
-                            st.metric("Security Posture Score", f"{score}/100")
-                        with col2:
-                            risk = ai_result.get('overall_risk', 'N/A')
-                            st.metric("Risk Level", risk)
-                        with col3:
-                            device_type = ai_result.get('device_type_detected', 'N/A')
-                            st.metric("Device Type", device_type)
-                        
-                        st.markdown("**Executive Summary**")
-                        st.info(ai_result.get('executive_summary', 'No summary available'))
-                        
-                        # Critical issues
-                        if ai_result.get('critical_security_issues'):
-                            st.markdown("**🚨 Critical Security Issues**")
-                            for issue in ai_result.get('critical_security_issues', []):
-                                st.error(issue)
-                        
-                        # Unnecessary services
-                        if ai_result.get('unnecessary_services'):
-                            st.markdown("**⚠️ Unnecessary Services (Consider Disabling)**")
-                            for svc in ai_result.get('unnecessary_services', []):
-                                st.warning(svc)
-                        
-                        # Services analysis
-                        if ai_result.get('services_analysis'):
-                            st.markdown("**🔍 Service-Level Analysis**")
-                            for svc in ai_result.get('services_analysis', []):
-                                with st.expander(f"Port {svc.get('port', 'N/A')} - {svc.get('service', 'Unknown')}"):
-                                    st.markdown(f"**Necessity:** {svc.get('necessity', 'N/A')}")
-                                    st.markdown(f"**Exposure Risk:** {svc.get('exposure_risk', 'N/A')}")
-                                    
-                                    if svc.get('hardening_recommendations'):
-                                        st.markdown("**Hardening:**")
-                                        for rec in svc.get('hardening_recommendations', []):
-                                            st.markdown(f"• {rec}")
-                        
-                        # Best practices
-                        if ai_result.get('best_practices'):
-                            st.markdown("**💡 Best Practices**")
-                            for practice in ai_result.get('best_practices', []):
-                                st.markdown(f"• {practice}")
-                elif ai_result.get('error'):
-                    st.error(f"AI Error: {ai_result.get('error')}")
 def show_history_page(dashboard):
     """History page"""
     st.markdown('<h1 class="main-header">📜 History</h1>', unsafe_allow_html=True)
@@ -1424,37 +1246,74 @@ def show_history_page(dashboard):
 def show_settings_page():
     """Settings page"""
     st.markdown('<h1 class="main-header">⚙️ Settings</h1>', unsafe_allow_html=True)
-    
-    # Only Display settings remain
+
+    # ── Gemini API Configuration ────────────────────────────────────────────────
+    st.subheader("🤖 AI Brain Configuration")
+    st.caption("NeuraTrace uses Google Gemini 1.5 Flash for rapid, automated security auditing.")
+
+    with st.container(border=True):
+        gemini_key = st.text_input(
+            "Gemini API Key",
+            value=st.session_state.get("gemini_api_key", os.environ.get("GEMINI_API_KEY", "")),
+            type="password",
+            help="Free API key from Google AI Studio."
+        )
+
+        col_save, col_test = st.columns(2)
+        with col_save:
+            if st.button("💾 Save AI Settings", use_container_width=True, type="primary"):
+                st.session_state.gemini_api_key = gemini_key
+                st.success("✅ Gemini API Key saved for active session.")
+        
+        with col_test:
+            if st.button("🔗 Test Connection", use_container_width=True):
+                try:
+                    from ai_brain import AIBrain
+                    brain = AIBrain(gemini_key)
+                    if brain.is_available():
+                        res = brain._generate_strict_verdict("Say [SAFE]")
+                        if "SAFE" in res:
+                            st.success("✅ Successfully connected to Gemini 1.5 Flash.")
+                        else:
+                            st.error(f"❌ Key works, but unexpected answer: {res}")
+                    else:
+                        st.error("❌ Key not valid or initialized.")
+                except Exception as e:
+                    st.error(f"❌ Connection testing failed: {e}")
+
+    st.divider()
+
+    # ── Display Settings ───────────────────────────────────────────────────────
     st.subheader("Display Settings")
-    
+
     with st.form("display_settings_form"):
         col1, col2 = st.columns(2)
-        
+
         with col1:
             theme = st.selectbox("Theme", ["Dark", "Light", "Auto"], index=0)
-            
+
         with col2:
             refresh_interval = st.slider("Dashboard Refresh (seconds)", 5, 60, 30)
-        
+
         if st.form_submit_button("💾 Save Display Settings", use_container_width=True):
             st.session_state.display_theme = theme
             st.session_state.refresh_interval = refresh_interval
             st.success("Display settings saved!")
-    
+
     st.divider()
-    
-    # System info
+
+    # ── System info ────────────────────────────────────────────────────────────
     st.subheader("System Information")
-    
+
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("AI Modules", "✅ Available" if AI_AVAILABLE else "❌ Not Available")
-        st.caption(f"Python: {sys.version.split()[0]}")
-    
-    with col2:
         st.metric("Version", "2.0")
+        st.caption(f"Python: {sys.version.split()[0]}")
+
+    with col2:
         st.caption("NeuraTrace Network Security")
+
+
 
 
 def show_logo_settings_page():
@@ -1665,250 +1524,7 @@ def create_sidebar(dashboard):
 # MAIN FUNCTION
 # ============================
 
-def make_chat_draggable():
-    components.html("""
-    <script>
-    let attempts = 0;
-    const interval = setInterval(function() {
-        const doc = window.parent.document;
-        const anchor = doc.getElementById('chat-drag-anchor');
-        attempts++;
-        if (!anchor) {
-            if(attempts > 20) clearInterval(interval);
-            return;
-        }
-        
-        let dragTarget = null;
-        let current = anchor.parentElement;
-        while(current && current !== doc.body) {
-            const style = window.parent.getComputedStyle(current);
-            if (style.position === 'fixed') {
-                dragTarget = current;
-                break;
-            }
-            current = current.parentElement;
-        }
-        
-        if (!dragTarget) {
-            // Fallback to the closest stVerticalBlock
-            dragTarget = anchor.closest('div[data-testid="stVerticalBlock"]');
-            if(!dragTarget) return; // wait more
-        }
-        
-        const btn = dragTarget.querySelector('div[data-testid="stPopover"] button');
-        if(!btn) return;
-        
-        clearInterval(interval);
-        if(btn.dataset.draggableAttached) return; // Prevent double attach
-        btn.dataset.draggableAttached = "true";
-        
-        // Forcibly override Streamlit layout to snap to the exact extreme bottom right
-        dragTarget.style.position = 'fixed';
-        dragTarget.style.bottom = '24px';
-        dragTarget.style.right = '24px';
-        dragTarget.style.top = 'auto';
-        dragTarget.style.left = 'auto';
-        dragTarget.style.width = 'fit-content';
-        dragTarget.style.zIndex = '999999';
-        
-        let isDragging = false;
-        let hasDragged = false;
-        let startX, startY;
-        let initialTop, initialLeft;
 
-        btn.style.cursor = 'grab';
-
-        btn.addEventListener('mousedown', function(e) {
-            isDragging = true;
-            hasDragged = false;
-            startX = e.clientX;
-            startY = e.clientY;
-            
-            const rect = dragTarget.getBoundingClientRect();
-            dragTarget.style.right = 'auto';
-            dragTarget.style.bottom = 'auto';
-            dragTarget.style.top = rect.top + 'px';
-            dragTarget.style.left = rect.left + 'px';
-            initialTop = rect.top;
-            initialLeft = rect.left;
-            
-            btn.style.cursor = 'grabbing';
-            doc.body.style.userSelect = 'none';
-        });
-
-        doc.addEventListener('mousemove', function(e) {
-            if (!isDragging) return;
-            
-            const dx = e.clientX - startX;
-            const dy = e.clientY - startY;
-            
-            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-                hasDragged = true;
-            }
-            
-            dragTarget.style.top = (initialTop + dy) + 'px';
-            dragTarget.style.left = (initialLeft + dx) + 'px';
-        });
-
-        doc.addEventListener('mouseup', function(e) {
-            if(isDragging) {
-                isDragging = false;
-                btn.style.cursor = 'grab';
-                doc.body.style.userSelect = 'auto';
-                
-                // Snap to left or right edge like a chat head
-                if (hasDragged) {
-                    const rect = dragTarget.getBoundingClientRect();
-                    const windowWidth = parent.window.innerWidth;
-                    const centerX = rect.left + (rect.width / 2);
-                    
-                    dragTarget.style.transition = 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
-                    setTimeout(() => { dragTarget.style.transition = 'none'; }, 300);
-                    
-                    if (centerX < windowWidth / 2) {
-                        // Left half
-                        dragTarget.style.left = '24px';
-                    } else {
-                        // Right half
-                        dragTarget.style.left = (windowWidth - rect.width - 24) + 'px';
-                    }
-                    
-                    // Constrain vertical bounds
-                    const windowHeight = parent.window.innerHeight;
-                    if (rect.top < 24) dragTarget.style.top = '24px';
-                    if (rect.bottom > windowHeight - 24) {
-                        dragTarget.style.top = (windowHeight - rect.height - 24) + 'px';
-                    }
-                }
-            }
-        });
-        
-        btn.addEventListener('click', function(e) {
-            if (hasDragged) {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                hasDragged = false;
-            }
-        }, true);
-    }, 200);
-    </script>
-    """, height=0, width=0)
-
-def render_floating_chat():
-    st.markdown("""
-        <style>
-        /* Force the popover wrapper to the right */
-        div[data-testid="stPopover"] {
-            display: flex !important;
-            justify-content: flex-end !important;
-            width: 100% !important;
-        }
-        
-        /* Make the popover button look like a floating action button */
-        div[data-testid="stPopover"] button {
-            border-radius: 50% !important;
-            height: 64px !important;
-            width: 64px !important;
-            min-height: 64px !important;
-            min-width: 64px !important;
-            background: linear-gradient(135deg, #3B82F6, #1E3A8A) !important;
-            color: white !important;
-            box-shadow: 0 6px 16px rgba(0,0,0,0.4) !important;
-            font-size: 28px !important;
-            border: 2px solid white !important;
-            padding: 0 !important;
-            transition: transform 0.2s;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            float: right !important;
-        }
-        div[data-testid="stPopover"] button:hover {
-            transform: scale(1.05);
-            background: linear-gradient(135deg, #2563EB, #1E40AF) !important;
-        }
-        
-        /* Hide the popover chevron icon specifically */
-        div[data-testid="stPopover"] button svg {
-            display: none !important;
-        }
-
-        /* Style the popover body so it looks like a clean, modern chat window */
-        div[data-testid="stPopoverBody"] {
-            width: 380px !important;
-            height: 480px !important;
-            margin-right: -10px !important;
-            border-radius: 16px !important; /* Softer corners */
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4) !important; /* Soft, deep shadow */
-            padding: 24px !important; /* Extra breathing room */
-            background-color: #1A1A22 !important; /* NeuraTrace dark theme match */
-            border: 1px solid rgba(255, 255, 255, 0.08) !important; /* Subtle thin border */
-        }
-        
-        /* Clean up Streamlit default text inside button */
-        div[data-testid="stPopover"] > button p {
-            margin: 0 !important;
-            padding: 0 !important;
-            font-size: 32px !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    chat_container = st.container()
-    with chat_container:
-        st.markdown('<div id="chat-drag-anchor" style="display:none;"></div>', unsafe_allow_html=True)
-        with st.popover("💬", use_container_width=False):
-            st.markdown("### 🤖 NeuraTrace AI")
-            
-            api_key = st.session_state.get('gemini_api_key', os.environ.get('GEMINI_API_KEY', ''))
-            
-            if not api_key:
-                st.warning("⚠️ API Key not found")
-            elif not AI_AVAILABLE:
-                st.error("AI modules missing. Please run: pip install google-generativeai")
-            else:
-                if 'chat_messages' not in st.session_state:
-                    st.session_state.chat_messages = []
-                    
-                messages_view = st.container(height=250)
-                with messages_view:
-                    for msg in st.session_state.chat_messages[-10:]:
-                        role = "You" if msg["role"] == "user" else "AI"
-                        st.markdown(f"**{role}:** {msg['content']}")
-                
-                # Central callback for handling inputs like a real chatbot
-                def handle_chat_submit():
-                    user_text = st.session_state.chat_input_floating
-                    if user_text.strip():
-                        st.session_state.chat_messages.append({"role": "user", "content": user_text})
-                        try:
-                            analyzer = AIAnalyzer(api_key)
-                            response = analyzer.chat(user_text)
-                            st.session_state.chat_messages.append({"role": "assistant", "content": response})
-                        except Exception as e:
-                            st.session_state.chat_messages.append({"role": "assistant", "content": f"Error: {e}"})
-                        # Clear visually by setting session_state directly
-                        st.session_state.chat_input_floating = ""
-                
-                # Bottom input area (widened button column 1->2 so "Send" does not word wrap)
-                col1, col2 = st.columns([3, 2])
-                with col1:
-                    st.text_input(
-                        "Prompt", 
-                        key="chat_input_floating", 
-                        label_visibility="collapsed", 
-                        placeholder="✨ Type here to ask AI...",
-                        on_change=handle_chat_submit
-                    )
-                with col2:
-                    st.button("Send", key="chat_send_floating", on_click=handle_chat_submit, use_container_width=True)
-                    
-    # Safely float exact container using JS injection, completely avoiding CSS collisions!
-    chat_container.float("bottom: 20px; right: 20px; background: transparent !important; display: flex; justify-content: flex-end;")
-    
-    # Inject drag logic
-    make_chat_draggable()
 
 def main():
     float_init()
@@ -1937,9 +1553,6 @@ def main():
         show_history_page(dashboard)
     elif st.session_state.page == "Settings":
         show_settings_page()
-    
-    # Render floating AI chat widget across all pages
-    render_floating_chat()
     
 
 

@@ -1,0 +1,54 @@
+# ============================================================
+# .dockerignore for NeuraTrace
+# ============================================================
+
+# Python runtime artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+.Python
+
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# Git history
+.git/
+.gitignore
+
+# User data (mounted as a volume at runtime)
+data/
+
+# Packet capture files (large binary files)
+*.pcap
+*.pcapng
+
+# Sensitive configuration
+.env
+.env.local
+*.env
+config.json
+secrets.json
+api_keys.json
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temp
+temp/
+tmp/

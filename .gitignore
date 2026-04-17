@@ -88,3 +88,11 @@ tmp/
 config.json
 secrets.json
 api_keys.json
+
+# ============================
+# STRIDE GPT (Sub-module)
+# ============================
+Stride GPT/.streamlit/secrets.toml
+Stride GPT/api_key.txt
+Stride GPT/test_functions.py
+Stride GPT/__pycache__/

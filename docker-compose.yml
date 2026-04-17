@@ -1,0 +1,64 @@
+# ============================================================
+# NeuraTrace - Docker Compose Orchestration
+# Services: neuratrace (main app)
+# Network:  neuratrace-net (shared bridge)
+# Volume:   neuratrace-data (persistent scan/capture storage)
+# ============================================================
+
+version: '3.9'
+
+# ── Shared bridge network ────────────────────────────────────────────────────
+networks:
+  neuratrace-net:
+    driver: bridge
+    name: neuratrace-net
+
+# ── Persistent storage for scan results and captures ────────────────────────
+volumes:
+  neuratrace-data:
+    name: neuratrace-data
+
+# ── Services ─────────────────────────────────────────────────────────────────
+services:
+
+  # ------------------------------------------------------------------
+  # NeuraTrace — Main Application
+  # Streamlit Dashboard:  http://localhost:8501
+  # IPC Capture Daemon:   127.0.0.1:50051 (internal only)
+  # ------------------------------------------------------------------
+  # Requires NET_ADMIN + NET_RAW for scapy/pyshark raw packet capture.
+  # NEURATRACE_DATA_DIR overrides the hardcoded Windows data path.
+  # ------------------------------------------------------------------
+  neuratrace:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: neuratrace
+    image: neuratrace/app:latest
+    networks:
+      - neuratrace-net
+    ports:
+      - "8501:8501"   # Streamlit Dashboard
+    volumes:
+      # Persistent data: captures, uploads, scan history
+      - neuratrace-data:/app/data
+    cap_add:
+      # Required for scapy/pyshark raw packet capture
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      # Override the hardcoded Windows save path for containerized use
+      - NEURATRACE_DATA_DIR=/app/data
+      # Streamlit config
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+
+
