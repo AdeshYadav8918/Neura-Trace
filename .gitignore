@@ -65,6 +65,7 @@ scan_history.json
 security_scan_history.json
 capture_metadata.json
 cve_cache.json
+neuratrace_mgmt.db
 
 # Log files (may contain sensitive info)
 *.log

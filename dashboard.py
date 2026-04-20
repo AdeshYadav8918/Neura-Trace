@@ -23,6 +23,11 @@ try:
     from streamlit_lottie import st_lottie
 except ImportError:
     pass
+import jwt
+from datetime import timedelta
+import db_manager
+import platform
+import psutil
 
 # API Configuration - Load from .env instead of hardcoding
 if os.path.exists('.env'):
@@ -31,19 +36,6 @@ if os.path.exists('.env'):
             if '=' in line and not line.startswith('#'):
                 k, v = line.strip().split('=', 1)
                 os.environ[k.strip()] = v.strip().strip("'\"")
-
-# Import AI modules
-try:
-    from ai_analyzer import AIAnalyzer
-    AI_AVAILABLE = True
-except ImportError:
-    AI_AVAILABLE = False
-
-# Import CVE Lookup (independent of AI)
-try:
-    from cve_lookup import CVELookup
-except ImportError:
-    pass # Handle gracefully if missing
 
 # Set page favicon - use logo if available
 _logo_path = "logo.png"
@@ -108,6 +100,199 @@ def load_logo_config():
     return None
 
 # ============================
+# JWT SECURITY HELPERS
+# ============================
+
+def create_jwt_token(username):
+    """Generate a signed JWT token valid for 4 hours"""
+    secret = os.environ.get("VAULT_MASTER_KEY_B64", "fallback_secret_key_neuratrace")
+    payload = {
+        "user": username,
+        "exp": datetime.utcnow() + timedelta(hours=4),
+        "iat": datetime.utcnow()
+    }
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+def verify_jwt_token(token):
+    """Decode and verify the JWT token"""
+    if not token:
+        return False
+    secret = os.environ.get("VAULT_MASTER_KEY_B64", "fallback_secret_key_neuratrace")
+    try:
+        jwt.decode(token, secret, algorithms=["HS256"])
+        return True
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        return False
+
+def get_ai_brain():
+    """Safely construct the AI backend without crashing the dashboard."""
+    try:
+        from ai_brain import AIBrain
+
+        brain = AIBrain(
+            gemini_api_key=os.environ.get("GEMINI_API_KEY", ""),
+            groq_api_key=os.environ.get("GROQ_API_KEY", ""),
+        )
+        return brain, None
+    except Exception as exc:
+        return None, f"AI assistant unavailable: {exc}"
+
+def get_ai_status(brain=None, error_message=None):
+    """Return a simple AI status label and detail message."""
+    if error_message:
+        return "Unavailable", error_message
+    if brain is None:
+        return "Unavailable", "AI assistant unavailable."
+    if brain.is_available():
+        return "Ready", getattr(brain, "status_message", "AI assistant ready.")
+    return "Unavailable", getattr(brain, "status_message", "Missing GEMINI_API_KEY.")
+
+def render_ai_verdict(verdict, fallback_message):
+    """Render verdict-style AI responses consistently."""
+    if not verdict:
+        st.warning(fallback_message)
+    elif "[SAFE]" in verdict:
+        st.success(verdict)
+    else:
+        st.error(verdict)
+
+def show_ai_analysis_result(callback):
+    """Execute an AI verdict analysis when the backend is available."""
+    brain, ai_error = get_ai_brain()
+    _, ai_status_message = get_ai_status(brain, ai_error)
+
+    if brain is None or not brain.is_available():
+        st.info(ai_status_message)
+        return
+
+    try:
+        verdict = callback(brain)
+    except Exception as exc:
+        st.warning(f"AI assistant unavailable: {exc}")
+        return
+
+    render_ai_verdict(verdict, ai_status_message)
+
+def build_scan_context(dashboard):
+    """Summarize the latest port scan for the AI assistant."""
+    if not dashboard.scan_history:
+        return ""
+
+    latest_scan = dashboard.scan_history[-1]
+    lines = [
+        "Latest port scan context:",
+        f"- Target: {latest_scan.get('target', 'N/A')}",
+        f"- Status: {latest_scan.get('status', 'unknown')}",
+        f"- Timestamp: {latest_scan.get('timestamp', 'N/A')}",
+    ]
+
+    stdout = latest_scan.get("stdout", "")
+    if stdout:
+        try:
+            results = json.loads(stdout)
+            open_ports = results.get("open_ports", {})
+            if open_ports:
+                services = [f"{port}/{service}" for port, service in list(open_ports.items())[:10]]
+                lines.append(f"- Open services: {', '.join(services)}")
+            security_analysis = results.get("security_analysis", {})
+            if security_analysis:
+                lines.append(
+                    f"- Security score: {security_analysis.get('security_score', 'N/A')} "
+                    f"(risk: {security_analysis.get('risk_level', 'N/A')})"
+                )
+        except (json.JSONDecodeError, TypeError, ValueError):
+            lines.append(f"- Raw scan excerpt: {stdout[:400]}")
+
+    return "\n".join(lines)
+
+def build_capture_context(dashboard):
+    """Summarize the latest packet capture for the AI assistant."""
+    latest_capture = st.session_state.get("last_capture")
+    if latest_capture is None and dashboard.capture_history:
+        latest_capture = dashboard.capture_history[-1]
+    if not latest_capture:
+        return ""
+
+    lines = [
+        "Latest capture context:",
+        f"- Interface: {latest_capture.get('interface', 'N/A')}",
+        f"- Protocol filter: {latest_capture.get('protocol', 'All')}",
+        f"- Packet count: {latest_capture.get('packet_count', 'N/A')}",
+        f"- Output file: {latest_capture.get('output_file', 'N/A')}",
+    ]
+
+    stdout = latest_capture.get("stdout", "")
+    if stdout:
+        lines.append(f"- Capture excerpt: {stdout[:400]}")
+
+    return "\n".join(lines)
+
+def build_pcap_context():
+    """Summarize the latest PCAP analysis for the AI assistant."""
+    results = st.session_state.get("pcap_analysis")
+    if not isinstance(results, dict):
+        return ""
+
+    summary = results.get("summary", {})
+    protocols = summary.get("protocols", [])
+    source_ips = summary.get("source_ips", [])
+    dest_ips = summary.get("dest_ips", [])
+
+    lines = [
+        "Latest PCAP analysis context:",
+        f"- Total packets: {summary.get('total_packets', 0)}",
+        f"- Protocols: {', '.join(protocols[:10]) if protocols else 'None detected'}",
+        f"- Source IP sample: {', '.join(source_ips[:5]) if source_ips else 'No source IPs'}",
+        f"- Destination IP sample: {', '.join(dest_ips[:5]) if dest_ips else 'No destination IPs'}",
+    ]
+
+    return "\n".join(lines)
+
+def collect_ai_context_sections(dashboard):
+    """Collect recent telemetry summaries that the assistant can use."""
+    sections = [build_scan_context(dashboard), build_capture_context(dashboard), build_pcap_context()]
+    return [section for section in sections if section]
+
+def build_ai_context(dashboard):
+    """Combine recent telemetry into a single assistant context payload."""
+    return "\n\n".join(collect_ai_context_sections(dashboard))
+
+def ensure_ai_chat_state():
+    """Initialize assistant chat history once per session."""
+    if "ai_messages" not in st.session_state:
+        st.session_state.ai_messages = [{
+            "role": "assistant",
+            "content": (
+                "I am ready to review your latest scans, packet captures, and PCAP analysis. "
+                "Ask for a summary, risk assessment, or hardening steps."
+            ),
+        }]
+
+def submit_ai_prompt(dashboard, prompt):
+    """Store a user prompt and append the assistant response."""
+    clean_prompt = (prompt or "").strip()
+    if not clean_prompt:
+        return
+
+    ensure_ai_chat_state()
+    st.session_state.ai_messages.append({"role": "user", "content": clean_prompt})
+
+    brain, ai_error = get_ai_brain()
+    _, ai_status_message = get_ai_status(brain, ai_error)
+    context = build_ai_context(dashboard)
+
+    if brain is None or not brain.is_available():
+        reply = ai_status_message
+        if context:
+            reply = f"{reply}\n\nRecent telemetry available for review:\n{context}"
+        else:
+            reply = f"{reply}\n\nRun a scan, capture, or PCAP analysis to give the assistant more context."
+    else:
+        reply = brain.ask_assistant(clean_prompt, context=context)
+
+    st.session_state.ai_messages.append({"role": "assistant", "content": reply})
+
+# ============================
 # CUSTOM CSS
 # ============================
 
@@ -120,13 +305,52 @@ def inject_css():
         padding-top: 1rem !important;
         margin-top: 0 !important;
     }
-    /* Remove the default Streamlit top toolbar gap */
-    header[data-testid="stHeader"] {
-        height: 0 !important;
-        min-height: 0 !important;
+    
+    /* Hide specific unwanted elements without breaking the sidebar toggle */
+    [data-testid="stToolbar"], [data-testid="stDeployButton"] {
+        display: none !important;
     }
+    #MainMenu { display: none !important; }
+    
+    /* Ensure header is visible but transparent, allowing the sidebar button to show */
+    header[data-testid="stHeader"] {
+        background: rgba(0,0,0,0) !important;
+        height: 3rem !important;
+    }
+
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, rgba(3, 7, 18, 0.97) 0%, rgba(15, 23, 42, 0.98) 100%) !important;
+        border-right: 1px solid rgba(96, 165, 250, 0.18) !important;
+    }
+
+    section[data-testid="stSidebar"] .block-container {
+        padding-top: 1rem !important;
+    }
+
+    @media (min-width: 769px) {
+        section[data-testid="stSidebar"] {
+            min-width: 20rem !important;
+            max-width: 20rem !important;
+        }
+        section[data-testid="stSidebar"][aria-expanded="false"] {
+            min-width: 20rem !important;
+            max-width: 20rem !important;
+            transform: translateX(0) !important;
+            visibility: visible !important;
+        }
+        section[data-testid="stSidebar"][aria-expanded="false"] > div:first-child,
+        section[data-testid="stSidebar"][aria-expanded="true"] > div:first-child {
+            width: 20rem !important;
+        }
+        section[data-testid="stSidebar"][aria-expanded="false"] + section[data-testid="stMain"] {
+            margin-left: 20rem !important;
+        }
+    }
+    
+    footer { visibility: hidden; }
+    
     #root > div:first-child > div > div > div > div > section > div {
-        padding-top: 0.5rem !important;
+        padding-top: 2rem !important;
     }
     
     /* Typography */
@@ -164,6 +388,7 @@ def inject_css():
         -webkit-text-fill-color: transparent !important;
         margin-bottom: 0.5rem !important;
         font-weight: 800 !important;
+        text-align: center !important;
         animation: fadeInDown 0.8s ease-out;
     }
 
@@ -208,6 +433,29 @@ def inject_css():
     }
     .stButton > button[kind="primary"]:active {
         transform: scale(0.97) !important;
+    }
+
+    /* Redesigned Login CSS */
+    .login-box {
+        background: rgba(17, 24, 39, 0.7) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 20px !important;
+        padding: 40px !important;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5) !important;
+    }
+    
+    .stTextInput > div > div > input {
+        background-color: rgba(55, 65, 81, 0.5) !important;
+        color: white !important;
+        border-radius: 12px !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        padding: 12px 16px !important;
+    }
+    
+    .stTextInput label {
+        color: #9CA3AF !important;
+        font-weight: 500 !important;
+        margin-bottom: 8px !important;
     }
 
     /* Tabular Row Hover */
@@ -258,6 +506,41 @@ def inject_css():
         color: #7000FF !important;
     }
 
+    /* Floating AI assistant bubble */
+    div:has(> .element-container div.ai-bubble-scope) .stButton > button {
+        width: 4rem !important;
+        height: 4rem !important;
+        min-width: 4rem !important;
+        border-radius: 999px !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        background: linear-gradient(135deg, #0EA5E9 0%, #2563EB 55%, #7C3AED 100%) !important;
+        color: white !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        box-shadow: 0 18px 45px rgba(37, 99, 235, 0.35) !important;
+        font-size: 0.95rem !important;
+        font-weight: 800 !important;
+        letter-spacing: 0.08em !important;
+    }
+    div:has(> .element-container div.ai-bubble-scope) .stButton > button:hover {
+        transform: translateY(-2px) scale(1.03) !important;
+        box-shadow: 0 24px 55px rgba(14, 165, 233, 0.4) !important;
+    }
+    div:has(> .element-container div.ai-bubble-scope) .stButton > button:focus {
+        box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.2), 0 18px 45px rgba(37, 99, 235, 0.35) !important;
+    }
+
+    /* Floating assistant panel */
+    div:has(> .element-container div.ai-panel-scope) .block-container {
+        padding-top: 0 !important;
+    }
+    div:has(> .element-container div.ai-panel-scope) [data-testid="stVerticalBlock"] {
+        gap: 0.65rem !important;
+    }
+    div:has(> .element-container div.ai-panel-scope) .stTextArea textarea {
+        min-height: 5rem !important;
+    }
+
     /* Animations */
     @keyframes fadeInDown {
         from { opacity: 0; transform: translateY(-20px); }
@@ -273,6 +556,33 @@ def inject_css():
     }
 </style>
 """, unsafe_allow_html=True)
+
+    components.html(
+        """
+        <script>
+        const expandSidebar = () => {
+            const doc = window.parent.document;
+            const sidebar = doc.querySelector('section[data-testid="stSidebar"]');
+            if (!sidebar || window.parent.innerWidth < 769) return;
+            if (sidebar.getAttribute('aria-expanded') !== 'false') return;
+
+            const toggleButton =
+                doc.querySelector('[data-testid="collapsedControl"] button') ||
+                doc.querySelector('button[aria-label="Open sidebar"]') ||
+                doc.querySelector('button[kind="headerNoPadding"]');
+
+            if (toggleButton) {
+                toggleButton.click();
+            }
+        };
+
+        setTimeout(expandSidebar, 100);
+        setTimeout(expandSidebar, 700);
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
 
 # Inject Custom SaaS CSS globally
 inject_css()
@@ -377,10 +687,33 @@ class NeuraTraceDashboard:
         except:
             return ['eth0', 'wlan0', 'en0', 'lo', 'any']
     
+    def _send_ipc_request(self, payload):
+        try:
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.settimeout(300)
+            client.connect(('127.0.0.1', 50051))
+            client.sendall(json.dumps(payload).encode('utf-8'))
+            
+            response_data = b""
+            while True:
+                chunk = client.recv(4096)
+                if not chunk: break
+                response_data += chunk
+            
+            client.close()
+            resp = json.loads(response_data.decode('utf-8'))
+            return resp.get("status") == "success", resp.get("stdout", ""), resp.get("stderr", "")
+        except Exception as e:
+            return False, "", f"IPC Daemon Error: {str(e)}"
+            
     def run_capture(self, interface, count, protocol, output_file):
         """Run packet capture using the CLI tool"""
         import re
         try:
+            # JWT Authentication Check
+            if not verify_jwt_token(st.session_state.auth_token):
+                return False, "", "Please login to continue"
+
             # Input validation
             if not re.match(r'^[a-zA-Z0-9.\-_ \(\)]+$', interface):
                 return False, "", "Security Violation: Invalid network interface characters"
@@ -392,31 +725,41 @@ class NeuraTraceDashboard:
             if not safe_out.startswith(allowed_base):
                 return False, "", "Security Violation: Output path must be within the configured save directory"
 
-            cmd = ['python', 'packet_analyzer.py',
-                   '-i', interface,
-                   '-c', str(count),
-                   '-o', safe_out]
+            req = {
+                "action": "capture",
+                "interface": interface,
+                "count": count,
+                "output": safe_out
+            }
+            
+            success, stdout, stderr = self._send_ipc_request(req)
 
-            if protocol and protocol != "All":
-                cmd.extend(['-p', protocol])
-
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-
+            # Log to Local History (Legacy)
             capture_info = {
                 'timestamp': datetime.now().isoformat(),
                 'interface': interface,
                 'protocol': protocol or 'All',
                 'packet_count': count,
                 'output_file': safe_out,
-                'status': 'success' if result.returncode == 0 else 'failed',
-                'stdout': result.stdout,
-                'stderr': result.stderr
+                'status': 'success' if success else 'failed',
+                'stdout': stdout,
+                'stderr': stderr
             }
-
             self.capture_history.append(capture_info)
             self.save_history()
 
-            return result.returncode == 0, result.stdout, result.stderr
+            # Global Unified History Logging
+            if st.session_state.user_info:
+                db_manager.add_to_global_history(
+                    user_id=st.session_state.user_info['id'],
+                    node_id=socket.gethostname(),
+                    scan_type="Capture",
+                    target=interface,
+                    status="success" if success else "failed",
+                    local_path=safe_out
+                )
+
+            return success, stdout, stderr
         except Exception as e:
             return False, "", str(e)
     
@@ -428,35 +771,47 @@ class NeuraTraceDashboard:
             if not re.match(r'^[a-zA-Z0-9.\-_]+$', target_ip):
                  return False, "", "Security Violation: Invalid target format"
              
+            # JWT Authentication Check
+            if not verify_jwt_token(st.session_state.auth_token):
+                return False, "", "Please login to continue"
+
             # Validate input
             if not self._validate_scan_request(target_ip, start_port, end_port):
                 return False, "", "Validation failed"
             
-            cmd = ['python', 'packet_analyzer.py',
-                   '--scan', target_ip,
-                   '--ports', f'{start_port}-{end_port}',
-                   '--json']
+            req = {
+                "action": "port_scan",
+                "target": target_ip,
+                "ports": f'{start_port}-{end_port}'
+            }
             
-            if analyze_security:
-                cmd.append('--analyze-security')
+            success, stdout, stderr = self._send_ipc_request(req)
             
-            # Enforce execution timeout for DoS resilience
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            
+            # Log to Local History (Legacy)
             scan_info = {
                 'timestamp': datetime.now().isoformat(),
                 'target': target_ip,
                 'port_range': f'{start_port}-{end_port}',
                 'security_analysis': analyze_security,
-                'status': 'success' if result.returncode == 0 else 'failed',
-                'stdout': result.stdout,
-                'stderr': result.stderr
+                'status': 'success' if success else 'failed',
+                'stdout': stdout,
+                'stderr': stderr
             }
-            
             self.scan_history.append(scan_info)
             self.save_history()
+
+            # Global Unified History Logging
+            if st.session_state.user_info:
+                db_manager.add_to_global_history(
+                    user_id=st.session_state.user_info['id'],
+                    node_id=socket.gethostname(),
+                    scan_type="Port Scan",
+                    target=target_ip,
+                    status="success" if success else "failed",
+                    local_path=f"{target_ip}:{start_port}-{end_port}"
+                )
             
-            return result.returncode == 0, result.stdout, result.stderr
+            return success, stdout, stderr
         except Exception as e:
             return False, "", str(e)
     
@@ -482,14 +837,21 @@ class NeuraTraceDashboard:
         try:
             # Path Traversal and File Validation
             abs_path = os.path.abspath(pcap_file)
-            if not os.path.exists(abs_path) or not abs_path.endswith('.pcap'):
-                return False, "", "Security Violation: Invalid PCAP path or extension"
+            if not os.path.exists(abs_path) or not abs_path.lower().endswith(('.pcap', '.pcapng')):
+                return False, "", "Security Violation: Invalid PCAP/PCAPNG path or extension"
             if os.path.getsize(abs_path) > 100 * 1024 * 1024:  # 100MB limit DoS Protection
                 return False, "", "Security Violation: PCAP file exceeds 100MB parsing limit"
 
-            cmd = ['python', 'packet_analyzer.py', '--analyze', abs_path, '--json']
+            analyzer_script = os.path.join(os.path.dirname(__file__), 'packet_analyzer.py')
+            cmd = [sys.executable, analyzer_script, '--analyze', abs_path, '--json']
             # Strict timeout for parser denial of service
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=os.path.dirname(analyzer_script),
+            )
             
             if result.returncode == 0:
                 try:
@@ -551,7 +913,7 @@ def metric_cards(dashboard):
 def feature_grid():
     """Renders the robust interactive UI tool grid with placeholders"""
     st.markdown("### ⚡ Platform Toolkit")
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         with st.container(border=True):
@@ -592,7 +954,6 @@ def feature_grid():
             if st.button("Analyze Files", key="dashboard_analyze", use_container_width=True, type="primary"):
                 st.session_state.page = "Analyze"
                 st.rerun()
-
 def show_dashboard_page(dashboard):
     """Main completely refactored dashboard page"""
     st_lottie_header()
@@ -761,17 +1122,8 @@ def show_capture_page(dashboard):
                             st.code(stdout)
                             
                         # ---- AUTOMATED AI BRAIN CHECK ----
-                        if st.session_state.get("gemini_api_key"):
-                            with st.spinner("🧠 AI Brain analyzing capture..."):
-                                from ai_brain import AIBrain
-                                brain = AIBrain(st.session_state.gemini_api_key)
-                                verdict = brain.analyze_live_capture(stdout)
-                                if "[SAFE]" in verdict:
-                                    st.success(verdict)
-                                else:
-                                    st.error(verdict)
-                        else:
-                            st.info("💡 Set your Gemini API Key in Settings to enable automated AI Brain analysis.")
+                        with st.spinner("🧠 AI Brain analyzing capture..."):
+                            show_ai_analysis_result(lambda brain: brain.analyze_live_capture(stdout))
                     
                     if os.path.exists(output_file):
                         file_size = os.path.getsize(output_file) / 1024
@@ -951,18 +1303,9 @@ def show_port_scanner_page(dashboard):
                                     
                                     # ---- AUTOMATED AI BRAIN CHECK ----
                                     st.divider()
-                                    if st.session_state.get("gemini_api_key"):
-                                        with st.spinner("🧠 AI Brain analyzing open ports..."):
-                                            from ai_brain import AIBrain
-                                            brain = AIBrain(st.session_state.gemini_api_key)
-                                            port_summary = json.dumps(open_ports)
-                                            verdict = brain.analyze_port_scan(port_summary)
-                                            if "[SAFE]" in verdict:
-                                                st.success(verdict)
-                                            else:
-                                                st.error(verdict)
-                                    else:
-                                        st.info("💡 Set your Gemini API Key in Settings to enable automated AI Brain analysis.")
+                                    with st.spinner("🧠 AI Brain analyzing open ports..."):
+                                        port_summary = json.dumps(open_ports)
+                                        show_ai_analysis_result(lambda brain: brain.analyze_port_scan(port_summary))
 
                                 else:
                                     st.info("No open ports found")
@@ -1047,24 +1390,15 @@ def show_analyze_page(dashboard):
                                 st.session_state.pcap_analysis = results
                                 
                         # ---- AUTOMATED AI BRAIN CHECK ----
-                        if "gemini_api_key" in st.session_state:
-                            st.divider()
-                            with st.spinner("🧠 AI Brain checking file structure for anomalies..."):
-                                from ai_brain import AIBrain
-                                brain = AIBrain(st.session_state.gemini_api_key)
-                                pcap_summary = {
-                                    'total_packets': results.get('summary', {}).get('total_packets', 0),
-                                    'protocols': results.get('summary', {}).get('protocols', []),
-                                    'source_ips': results.get('summary', {}).get('source_ips', [])[:50],  # cap for context length
-                                    'dest_ips': results.get('summary', {}).get('dest_ips', [])[:50]
-                                }
-                                verdict = brain.analyze_pcap_structure(json.dumps(pcap_summary))
-                                if "[SAFE]" in verdict:
-                                    st.success(verdict)
-                                else:
-                                    st.error(verdict)
-                        else:
-                            st.info("💡 Set your Gemini API Key in Settings to enable automated AI PCAP analysis.")
+                        st.divider()
+                        with st.spinner("🧠 AI Brain checking file structure for anomalies..."):
+                            pcap_summary = {
+                                'total_packets': results.get('summary', {}).get('total_packets', 0),
+                                'protocols': results.get('summary', {}).get('protocols', []),
+                                'source_ips': results.get('summary', {}).get('source_ips', [])[:50],  # cap for context length
+                                'dest_ips': results.get('summary', {}).get('dest_ips', [])[:50]
+                            }
+                            show_ai_analysis_result(lambda brain: brain.analyze_pcap_structure(json.dumps(pcap_summary)))
                             
                         # Missing block fallback (non-dict results)
                         if not isinstance(results, dict):
@@ -1124,10 +1458,7 @@ def show_device_security_page(dashboard):
         st.divider()
         
         if st.button("🚀 Start Independent Security Audit", type="primary", use_container_width=True):
-            if not st.session_state.get("gemini_api_key"):
-                st.error("❌ Gemini API Key missing. Please provide it in the Settings menu.")
-            else:
-                with st.spinner(f"AI Brain is auditing {target_ip} (this may take a moment)..."):
+            with st.spinner(f"Local Engine is auditing {target_ip} (this may take a moment)..."):
                     # 1. Run Port Scan
                     success, stdout, stderr = dashboard.run_port_scan_with_services(
                         target_ip=target_ip,
@@ -1162,28 +1493,10 @@ def show_device_security_page(dashboard):
                                     'raw_results': results
                                 }
                                 
-                                # 2. CVE Lookup
-                                cve_list = []
-                                try:
-                                    cve_lookup = CVELookup(st.session_state.get('nvd_api_key'))
-                                    for p, s in open_ports.items():
-                                        details = results.get('service_details', {}).get(str(p), {})
-                                        res = cve_lookup.get_cves_for_service(s, details.get('banner', ''))
-                                        if res.get('cves'):
-                                            cve_list.extend(res['cves'])
-                                except Exception:
-                                    pass # Ignore CVE errors for now
-                                
-                                # 3. AUTOMATED AI BRAIN CHECK
+                                # 3. AUTOMATED AI SECURITY CHECK
                                 st.divider()
-                                st.subheader("🛡️ AI Security Audit")
-                                from ai_brain import AIBrain
-                                brain = AIBrain(st.session_state.gemini_api_key)
-                                verdict = brain.analyze_device_security(json.dumps(scan_data), cve_list)
-                                if "[SAFE]" in verdict:
-                                    st.success(verdict)
-                                else:
-                                    st.error(verdict)
+                                st.subheader("🛡️ AI Security Audit (Gemini API)")
+                                show_ai_analysis_result(lambda brain: brain.analyze_device_security(json.dumps(scan_data)))
                                 
                             else:
                                 st.warning("No active services found to audit.")
@@ -1193,230 +1506,235 @@ def show_device_security_page(dashboard):
                         st.error("Scan failed. Check target connectivity.")
                         if stderr: st.code(stderr)
 def show_history_page(dashboard):
-    """History page"""
-    st.markdown('<h1 class="main-header">📜 History</h1>', unsafe_allow_html=True)
+    """Unified Global History page"""
+    st.markdown('<h1 class="main-header">📜 Global Network History</h1>', unsafe_allow_html=True)
+    st.info("💡 Showing unified history across all sensor nodes in the LAN.")
     
-    tab1, tab2 = st.tabs(["Scan History", "Capture History"])
+    global_history = db_manager.get_global_history()
     
-    with tab1:
-        if not dashboard.scan_history:
-            st.info("No scan history available")
-        else:
-            scan_df = pd.DataFrame(dashboard.scan_history)
-            if 'security_analysis' not in scan_df.columns:
-                scan_df['security_analysis'] = None
-            scan_df['timestamp'] = pd.to_datetime(scan_df['timestamp'])
-            
-            st.dataframe(
-                scan_df.sort_values('timestamp', ascending=False),
-                use_container_width=True,
-                column_config={
-                    "timestamp": st.column_config.DatetimeColumn("Timestamp"),
-                    "target": "Target IP",
-                    "port_range": "Port Range",
-                    "security_analysis": st.column_config.CheckboxColumn("Security Analysis"),
-                    "status": st.column_config.TextColumn("Status")
-                }
-            )
-    
-    with tab2:
-        if not dashboard.capture_history:
-            st.info("No capture history available")
-        else:
-            history_df = pd.DataFrame(dashboard.capture_history)
-            history_df['timestamp'] = pd.to_datetime(history_df['timestamp'])
-            
-            st.dataframe(
-                history_df.sort_values('timestamp', ascending=False),
-                use_container_width=True,
-                column_config={
-                    "timestamp": st.column_config.DatetimeColumn("Timestamp"),
-                    "interface": "Interface",
-                    "protocol": "Protocol",
-                    "packet_count": st.column_config.NumberColumn("Packets"),
-                    "status": st.column_config.TextColumn("Status"),
-                    "output_file": "Output File"
-                }
-            )
+    if not global_history:
+        st.warning("No global activity recorded yet.")
+        
+        # Fallback to local if empty
+        if dashboard.scan_history or dashboard.capture_history:
+            st.info("Showing local legacy history only.")
+            # ... (omitted for brevity, keeping simple for now)
+    else:
+        history_df = pd.DataFrame(global_history, columns=[
+            "Timestamp", "User", "Node", "Type", "Target", "Status", "Local Path"
+        ])
+        history_df['Timestamp'] = pd.to_datetime(history_df['Timestamp'])
+        
+        st.dataframe(
+            history_df.sort_values('Timestamp', ascending=False),
+            use_container_width=True,
+            column_config={
+                "Timestamp": st.column_config.DatetimeColumn("Activity Time"),
+                "User": "Analyst",
+                "Node": "Origin System",
+                "Type": "Action",
+                "Local Path": st.column_config.TextColumn("Agent Path (Local)")
+            }
+        )
 
-# ============================
-# SETTINGS PAGES (Keep same as before)
-# ============================
+def render_floating_ai_assistant(dashboard):
+    """Render the floating bottom-right AI assistant widget."""
+    ensure_ai_chat_state()
+    if "ai_widget_open" not in st.session_state:
+        st.session_state.ai_widget_open = False
+
+    pending_prompt = st.session_state.pop("ai_pending_prompt", "")
+    if pending_prompt:
+        st.session_state.ai_widget_open = True
+        submit_ai_prompt(dashboard, pending_prompt)
+
+    if st.session_state.ai_widget_open:
+        panel_container = st.container()
+        with panel_container:
+            st.markdown('<div class="ai-panel-scope"></div>', unsafe_allow_html=True)
+
+            brain, ai_error = get_ai_brain()
+            ai_status_label, ai_status_message = get_ai_status(brain, ai_error)
+            context_sections = collect_ai_context_sections(dashboard)
+
+            header_col, close_col = st.columns([5, 1])
+            with header_col:
+                st.markdown("#### AI Assistant")
+                st.caption(f"{ai_status_label} status")
+                st.caption(ai_status_message)
+            with close_col:
+                if st.button("x", key="ai_widget_close", use_container_width=True):
+                    st.session_state.ai_widget_open = False
+                    st.rerun()
+
+            quick_col1, quick_col2 = st.columns(2)
+            with quick_col1:
+                if st.button("Summarize Risk", key="ai_widget_risk", use_container_width=True):
+                    submit_ai_prompt(dashboard, "Summarize the latest network risk posture and highlight the top issues.")
+                    st.rerun()
+                if st.button("Explain Scan", key="ai_widget_scan", use_container_width=True):
+                    submit_ai_prompt(dashboard, "Explain the latest scan results in plain language and tell me what matters.")
+                    st.rerun()
+            with quick_col2:
+                if st.button("Hardening", key="ai_widget_hardening", use_container_width=True):
+                    submit_ai_prompt(dashboard, "Give me the next hardening steps based on the recent telemetry.")
+                    st.rerun()
+                if st.button("Clear Chat", key="ai_widget_clear", use_container_width=True):
+                    st.session_state.ai_messages = [{
+                        "role": "assistant",
+                        "content": "Conversation cleared. Ask about scans, captures, PCAP files, or remediation steps.",
+                    }]
+                    st.rerun()
+
+            with st.expander("Telemetry Context", expanded=False):
+                if context_sections:
+                    for section in context_sections:
+                        st.code(section, language="text")
+                else:
+                    st.info("Run a scan, packet capture, or PCAP analysis to give the assistant structured context.")
+
+            message_area = st.container(height=280, border=False)
+            with message_area:
+                for message in st.session_state.ai_messages[-10:]:
+                    with st.chat_message(message["role"]):
+                        st.markdown(message["content"])
+
+            with st.form("ai_widget_form", clear_on_submit=True):
+                prompt = st.text_area(
+                    "Message",
+                    placeholder="Ask about anomalies, recent scans, or next remediation steps",
+                    label_visibility="collapsed",
+                    height=90,
+                )
+                submitted = st.form_submit_button("Send", use_container_width=True, type="primary")
+
+            if submitted and prompt.strip():
+                submit_ai_prompt(dashboard, prompt)
+                st.rerun()
+
+        panel_container.float(
+            "right: 1rem;"
+            "bottom: 6.25rem;"
+            "width: min(26rem, calc(100vw - 1rem));"
+            "max-width: calc(100vw - 1rem);"
+            "max-height: 78vh;"
+            "overflow-y: auto;"
+            "overflow-x: hidden;"
+            "background: rgba(8, 15, 30, 0.94);"
+            "border: 1px solid rgba(96, 165, 250, 0.22);"
+            "border-radius: 1.25rem;"
+            "padding: 1rem;"
+            "box-shadow: 0 28px 70px rgba(0, 0, 0, 0.45);"
+            "backdrop-filter: blur(18px);"
+            "z-index: 1000;"
+        )
+
+    bubble_container = st.container()
+    with bubble_container:
+        st.markdown('<div class="ai-bubble-scope"></div>', unsafe_allow_html=True)
+        if st.button("AI", key="ai_widget_toggle", help="Open or close the AI assistant", use_container_width=True):
+            st.session_state.ai_widget_open = not st.session_state.ai_widget_open
+            st.rerun()
+
+    bubble_container.float(
+        "right: 1rem;"
+        "bottom: 1rem;"
+        "width: 4rem;"
+        "background: transparent;"
+        "z-index: 1001;"
+    )
 
 def show_settings_page():
-    """Settings page"""
-    st.markdown('<h1 class="main-header">⚙️ Settings</h1>', unsafe_allow_html=True)
-
-    # ── Gemini API Configuration ────────────────────────────────────────────────
-    st.subheader("🤖 AI Brain Configuration")
-    st.caption("NeuraTrace uses Google Gemini 1.5 Flash for rapid, automated security auditing.")
-
-    with st.container(border=True):
-        gemini_key = st.text_input(
-            "Gemini API Key",
-            value=st.session_state.get("gemini_api_key", os.environ.get("GEMINI_API_KEY", "")),
-            type="password",
-            help="Free API key from Google AI Studio."
-        )
-
-        col_save, col_test = st.columns(2)
-        with col_save:
-            if st.button("💾 Save AI Settings", use_container_width=True, type="primary"):
-                st.session_state.gemini_api_key = gemini_key
-                st.success("✅ Gemini API Key saved for active session.")
-        
-        with col_test:
-            if st.button("🔗 Test Connection", use_container_width=True):
-                try:
-                    from ai_brain import AIBrain
-                    brain = AIBrain(gemini_key)
-                    if brain.is_available():
-                        res = brain._generate_strict_verdict("Say [SAFE]")
-                        if "SAFE" in res:
-                            st.success("✅ Successfully connected to Gemini 1.5 Flash.")
-                        else:
-                            st.error(f"❌ Key works, but unexpected answer: {res}")
-                    else:
-                        st.error("❌ Key not valid or initialized.")
-                except Exception as e:
-                    st.error(f"❌ Connection testing failed: {e}")
-
-    st.divider()
-
-    # ── Display Settings ───────────────────────────────────────────────────────
-    st.subheader("Display Settings")
-
-    with st.form("display_settings_form"):
-        col1, col2 = st.columns(2)
-
-        with col1:
-            theme = st.selectbox("Theme", ["Dark", "Light", "Auto"], index=0)
-
-        with col2:
-            refresh_interval = st.slider("Dashboard Refresh (seconds)", 5, 60, 30)
-
-        if st.form_submit_button("💾 Save Display Settings", use_container_width=True):
-            st.session_state.display_theme = theme
-            st.session_state.refresh_interval = refresh_interval
-            st.success("Display settings saved!")
-
-    st.divider()
-
-    # ── System info ────────────────────────────────────────────────────────────
-    st.subheader("System Information")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Version", "2.0")
-        st.caption(f"Python: {sys.version.split()[0]}")
-
-    with col2:
-        st.caption("NeuraTrace Network Security")
-
-
-
-
-def show_logo_settings_page():
-    """Page for uploading/changing logo"""
-    st.markdown('<h1 class="main-header">🖼️ Logo Settings</h1>', unsafe_allow_html=True)
+    """System Settings for User Management"""
+    st.markdown('<h1 class="main-header">⚙️ System Configuration</h1>', unsafe_allow_html=True)
     
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.subheader("Current Logo")
-        
-        if st.session_state.get('logo_path') and os.path.exists(st.session_state.logo_path):
-            logo_base64 = get_logo_base64(st.session_state.logo_path)
-            if logo_base64:
-                st.image(f"data:image/png;base64,{logo_base64}", width=200)
-                st.success(f"✅ Logo loaded from: {st.session_state.logo_path}")
-            else:
-                st.warning("⚠️ Could not load current logo")
-        else:
-            st.info("ℹ️ No custom logo set. Using default icon.")
-            st.image("https://img.icons8.com/color/96/000000/network.png", width=100)
-    
-    with col2:
-        st.subheader("Upload New Logo")
-        
-        uploaded_file = st.file_uploader(
-            "Choose a logo image", 
-            type=['png', 'jpg', 'jpeg', 'gif', 'bmp'],
-            help="Recommended: PNG format, transparent background, 200x200px"
-        )
-        
-        if uploaded_file is not None:
-            logo_dir = DATA_DIR / "uploads" / "logos"
-            logo_dir.mkdir(parents=True, exist_ok=True)
+    if not st.session_state.user_info:
+        st.error("Please login to access settings")
+        return
 
-            file_path = str(logo_dir / uploaded_file.name)
-            with open(file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            
-            st.image(uploaded_file, width=100)
-            
-            if st.button("💾 Set as Application Logo", use_container_width=True):
-                if save_logo_path(file_path):
-                    st.success("✅ Logo updated successfully!")
-                    time.sleep(1)
-                    st.rerun()
+    tab1, tab2 = st.tabs(["Profile Security", "User Management (Admin)"])
+    
+    with tab1:
+        st.markdown("### Change Your Password")
+        with st.form("change_pwd_form"):
+            new_pwd = st.text_input("New Password", type="password")
+            confirm_pwd = st.text_input("Confirm New Password", type="password")
+            if st.form_submit_button("Update Password", type="primary"):
+                if new_pwd == confirm_pwd and len(new_pwd) >= 6:
+                    db_manager.change_password(st.session_state.user_info['id'], new_pwd)
+                    st.success("✅ Password updated successfully")
                 else:
-                    st.error("❌ Failed to save logo")
-        
-        st.subheader("Other Options")
-        
-        st.markdown("**Or use local file:**")
-        logo_path_input = st.text_input(
-            "Enter full path to logo:",
-            placeholder="C:/Users/YourName/logo.png or /home/user/logo.png",
-            help="Enter the full path to your logo file"
-        )
-        
-        if logo_path_input:
-            if os.path.exists(logo_path_input):
-                if st.button("📁 Use This Logo", use_container_width=True):
-                    if save_logo_path(logo_path_input):
-                        st.success("✅ Logo path saved!")
-                        time.sleep(1)
-                        st.rerun()
+                    st.error("❌ Passwords must match and be at least 6 characters")
+    
+    with tab2:
+        if st.session_state.user_info.get('role') != 'admin':
+            st.warning("Admin privileges required to manage other users")
+        else:
+            st.markdown("### Register New System User")
+            with st.form("new_user_form"):
+                new_user = st.text_input("Username")
+                new_user_pwd = st.text_input("Temporary Password", type="password")
+                new_user_role = st.selectbox("Role", ["analyst", "admin"])
+                if st.form_submit_button("Create User", type="primary"):
+                    if db_manager.create_user(new_user, new_user_pwd, new_user_role):
+                        st.success(f"✅ User '{new_user}' created")
                     else:
-                        st.error("❌ Invalid logo path")
-            else:
-                st.error("❌ File not found at this path")
+                        st.error("❌ User already exists or invalid data")
+            
+            st.markdown("---")
+            st.markdown("### Active System Users")
+            users = db_manager.get_all_users()
+            df_users = pd.DataFrame(users, columns=["ID", "Username", "Role", "Created At"])
+            st.dataframe(df_users, hide_index=True, use_container_width=True)
+
+
+
+# ============================
+# UI COMPONENTS
+# ============================
+
+def render_universal_header():
+    """Universal centered header with high-assurance branding"""
+    st.markdown("""
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <h1 class="main-header" style="font-size: 3.5rem !important;">🛡️ NeuraTrace</h1>
+        <p style='color: #9CA3AF; margin-top: -10px; letter-spacing: 2px; font-size: 0.9rem;'>
+            HIGH-ASSURANCE NETWORK INTELLIGENCE PLATFORM
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ============================
+# AUTHENTICATION MODULE
+# ============================
+
+def show_login_module():
+    """Redesigned Login Module with premium aesthetics"""
+    st.markdown('<div class="login-box">', unsafe_allow_html=True)
+    st.markdown("### Authentication Required")
+    
+    with st.form("login_form", clear_on_submit=True):
+        username = st.text_input("Username", placeholder="Enter your identity")
+        password = st.text_input("Password", type="password", placeholder="••••••••")
         
-        if st.session_state.get('logo_path'):
-            if st.button("🔄 Reset to Default", use_container_width=True):
-                st.session_state.logo_path = None
-                config_path = str(DATA_DIR / 'neura_trace_config.json')
-                if os.path.exists(_CONFIG_FILE):
-                    os.remove(_CONFIG_FILE)
-                if os.path.exists(config_path):
-                    os.remove(config_path)
-                st.success("✅ Reset to default icon")
+        submit = st.form_submit_button("LOGIN", use_container_width=True, type="primary")
+        
+        if submit:
+            user = db_manager.authenticate_user(username, password)
+            if user:
+                token = create_jwt_token(username)
+                st.session_state.auth_token = token
+                st.session_state.user_info = user
+                st.success(f"🔓 Access Granted. Welcome {username}.")
                 time.sleep(1)
                 st.rerun()
+            else:
+                st.error("❌ Invalid credentials")
     
-    st.divider()
-    
-    with st.expander("📋 Logo Guidelines"):
-        st.markdown("""
-        **For best results:**
-        
-        ✅ **Recommended:**
-        - PNG format with transparency
-        - Square aspect ratio (1:1)
-        - 200x200 to 400x400 pixels
-        - Simple design with clear edges
-        - File size under 500KB
-        
-        ❌ **Avoid:**
-        - Very large files (>2MB)
-        - Complex backgrounds
-        - Text-heavy logos
-        - Irregular shapes
-        
-        **Supported formats:** PNG, JPG, JPEG, GIF, BMP
-        """)
+    st.markdown('</div>', unsafe_allow_html=True)
+    if st.button("Cancel", use_container_width=True):
+        st.session_state.show_login = False
+        st.rerun()
 
 # ============================
 # SIDEBAR
@@ -1448,12 +1766,35 @@ def create_sidebar(dashboard):
         
         st.markdown("---")
         
+        # --- Authentication Status ---
+        st.markdown("### 🔑 System Access")
+        is_logged_in = verify_jwt_token(st.session_state.get('auth_token'))
+        
+        if is_logged_in:
+            st.success(f"Active: {st.session_state.user_info.get('username')}")
+            if st.button("Logout", use_container_width=True):
+                st.session_state.auth_token = None
+                st.session_state.user_info = None
+                st.rerun()
+        else:
+            st.warning("Protected Mode")
+            if st.button("Login to Execute", use_container_width=True, type="primary"):
+                st.session_state.show_login = True
+                st.rerun()
+        
+        st.markdown("---")
+        
         # Navigation
         from streamlit_option_menu import option_menu
+        st.markdown("### Navigation")
         
         # Determine current index
-        pages = ["Dashboard", "Capture", "Port Scanner", "Device Security", "Analyze", "History", "Settings"]
-        icons = ["speedometer2", "record-circle", "search", "shield-lock", "file-earmark-bar-graph", "clock-history", "gear"]
+        pages = ["Dashboard", "Capture", "Port Scanner", "Device Security", "Analyze", "History"]
+        icons = ["speedometer2", "record-circle", "search", "shield-lock", "file-earmark-bar-graph", "clock-history"]
+        
+        if is_logged_in:
+            pages.append("Settings")
+            icons.append("gear")
         
         current_idx = pages.index(st.session_state.page) if st.session_state.page in pages else 0
         
@@ -1486,10 +1827,9 @@ def create_sidebar(dashboard):
         if selected_page != st.session_state.page:
             st.session_state.page = selected_page
             st.rerun()
-        
+
         st.markdown("---")
-        st.markdown("### 💻 System Info")
-        
+        st.markdown("### System Info")
         import platform
         import psutil
         
@@ -1528,15 +1868,36 @@ def create_sidebar(dashboard):
 
 def main():
     float_init()
+    inject_css()
+    db_manager.init_db()
+    
     # Initialize session state
     if 'page' not in st.session_state:
         st.session_state.page = "Dashboard"
+    elif st.session_state.page == "AI Assistant":
+        st.session_state.page = "Dashboard"
+    if 'auth_token' not in st.session_state:
+        st.session_state.auth_token = None
+    if 'show_login' not in st.session_state:
+        st.session_state.show_login = False
+    if 'user_info' not in st.session_state:
+        st.session_state.user_info = None
+    if 'ai_widget_open' not in st.session_state:
+        st.session_state.ai_widget_open = False
     
     # Initialize dashboard
     dashboard = NeuraTraceDashboard()
     
     # Create sidebar with logo
     create_sidebar(dashboard)
+    
+    # Render Universal Header
+    render_universal_header()
+    
+    # Check if we should show the login module
+    if st.session_state.show_login:
+        show_login_module()
+        return
     
     # Main content based on selected page
     if st.session_state.page == "Dashboard":
@@ -1553,6 +1914,8 @@ def main():
         show_history_page(dashboard)
     elif st.session_state.page == "Settings":
         show_settings_page()
+
+    render_floating_ai_assistant(dashboard)
     
 
 

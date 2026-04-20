@@ -19,6 +19,22 @@ import time
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+DEFAULT_SAVE_PATH = os.environ.get("NEURATRACE_DATA_DIR", r"E:\Backup\Desktop\NT\saved_scans")
+
+def resolve_save_path():
+    """Resolve the shared data directory used by the dashboard and CLI."""
+    save_path = DEFAULT_SAVE_PATH
+    config_file = os.path.join(save_path, 'neura_trace_config.json')
+    try:
+        if os.path.exists(config_file):
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+                if config.get('save_path'):
+                    save_path = config['save_path']
+    except Exception:
+        pass
+    return save_path
+
 class PortScanner:
     def __init__(self, timeout=1.0, max_workers=100):
         self.timeout = timeout
@@ -474,17 +490,7 @@ class PacketAnalyzer:
         }
         
         # Save local log (using custom path from config if available)
-        save_path = r"E:\Backup\Desktop\NT\saved_scans"
-        _cfg_file = os.path.join(save_path, 'neura_trace_config.json')
-        try:
-            if os.path.exists(_cfg_file):
-                with open(_cfg_file, 'r') as f:
-                    cfg = json.load(f)
-                    if 'save_path' in cfg:
-                        save_path = cfg['save_path']
-        except Exception:
-            pass
-
+        save_path = resolve_save_path()
         os.makedirs(save_path, exist_ok=True)
         with open(os.path.join(save_path, 'neura_trace_usage.log'), 'a') as f:
             f.write(json.dumps(log_entry) + '\n')
@@ -560,6 +566,9 @@ class PacketAnalyzer:
         self.capture_stats['interfaces_used'].add(interface)
         
         try:
+            output_dir = os.path.dirname(output_file)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
             packets = sniff(iface=interface, count=count, filter=filter, prn=self.packet_callback)
             wrpcap(output_file, packets)
             
@@ -579,7 +588,8 @@ class PacketAnalyzer:
     
     def save_capture_metadata(self, output_file):
         """Save capture metadata as JSON"""
-        metadata_file = output_file.replace('.pcap', '_metadata.json')
+        file_root, _ = os.path.splitext(output_file)
+        metadata_file = f"{file_root}_metadata.json"
         metadata = {
             'filename': output_file,
             'capture_stats': self.capture_stats,
@@ -777,7 +787,13 @@ def main():
     parser.add_argument('-i', '--interface', type=str, help="Network interface to capture packets from")
     parser.add_argument('-p', '--protocol', type=str, help="Protocol to filter (e.g., TCP, UDP, HTTP)")
     parser.add_argument('-c', '--count', type=int, default=100, help="Number of packets to capture")
-    parser.add_argument('-o', '--output', type=str, default=r"E:\Backup\Desktop\NT\saved_scans\captures\captured_packets.pcap", help="Output file")
+    parser.add_argument(
+        '-o',
+        '--output',
+        type=str,
+        default=os.path.join(resolve_save_path(), 'captures', 'captured_packets.pcap'),
+        help="Output file",
+    )
     
     # Analysis arguments
     parser.add_argument('--list_interfaces', action='store_true', help="List available network interfaces")
